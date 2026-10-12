@@ -1,5 +1,5 @@
 [project]
-name = "ps5-agent-bridge"
+name = "ps5-remoteplay-mcp"
 version = "0.1.0"
 description = "MCP server that lets an LLM agent see and drive a stock PS5 over Remote Play"
 readme = "README.md"

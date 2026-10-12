@@ -1,1 +1,1 @@
-"""PS5 Agent Bridge."""
+"""PS5 Remote Play MCP."""

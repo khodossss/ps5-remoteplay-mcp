@@ -1,4 +1,4 @@
-# PS5 Agent Bridge
+# PS5 Remote Play MCP
 
 An MCP server that lets an LLM agent (Claude Code, Codex, any MCP client) **see the screen of a stock PlayStation 5 and drive it like a gamepad**. It uses Sony's official Remote Play protocol over your local network: no jailbreak and no capture card.
 
@@ -30,8 +30,8 @@ The console's IP address is under **Settings → System → System Software → 
 ### 2. Install
 
 ```
-git clone https://github.com/khodossss/ps5-agent-bridge.git
-cd ps5-agent-bridge
+git clone https://github.com/khodossss/ps5-remoteplay-mcp.git
+cd ps5-remoteplay-mcp
 uv sync
 ```
 
@@ -52,7 +52,7 @@ Credentials are stored in `~/.config/ps5-agent/profiles.json`. They never appear
 **Claude Code**
 
 ```
-claude mcp add --env PS5_HOST=<console-ip> --transport stdio ps5 -- uv run --project /path/to/ps5-agent-bridge ps5agent-mcp
+claude mcp add --env PS5_HOST=<console-ip> --transport stdio ps5 -- uv run --project /path/to/ps5-remoteplay-mcp ps5agent-mcp
 ```
 
 Add `--scope user` to make it available in every project. Check it with `claude mcp list`, or `/mcp` inside Claude Code.
@@ -64,7 +64,7 @@ Add `--scope user` to make it available in every project. Check it with `claude 
   "mcpServers": {
     "ps5": {
       "command": "uv",
-      "args": ["run", "--project", "/path/to/ps5-agent-bridge", "ps5agent-mcp"],
+      "args": ["run", "--project", "/path/to/ps5-remoteplay-mcp", "ps5agent-mcp"],
       "env": { "PS5_HOST": "<console-ip>" }
     }
   }
@@ -76,7 +76,7 @@ Add `--scope user` to make it available in every project. Check it with `claude 
 ```toml
 [mcp_servers.ps5]
 command = "uv"
-args = ["run", "--project", "/path/to/ps5-agent-bridge", "ps5agent-mcp"]
+args = ["run", "--project", "/path/to/ps5-remoteplay-mcp", "ps5agent-mcp"]
 env = { PS5_HOST = "<console-ip>" }
 ```
 

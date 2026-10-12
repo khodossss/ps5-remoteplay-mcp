@@ -1,4 +1,4 @@
-# PS5 Agent Bridge
+# PS5 Remote Play MCP
 MCP server + daemon: an LLM agent (Claude Code, Codex) sees the screen of a stock PS5 and drives it like a gamepad over Remote Play on the LAN.
 
 ## What this project is
@@ -160,7 +160,7 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 ## Git workflow
 - **Conventional commits** (`feat:`/`fix:`/`chore:`/`refactor:`/`docs:`/`test:`). Branches `feat/…`, `fix/…`, `chore/…`. PR titles in the same format.
 - **No co-author trailer** unless the user asks.
-- **Forge**: GitHub, `khodossss/ps5-agent-bridge` (public); CLI `gh` — observe with `gh pr list`, `gh pr checks <n>`.
+- **Forge**: GitHub, `khodossss/ps5-remoteplay-mcp` (public); CLI `gh` — observe with `gh pr list`, `gh pr checks <n>`.
 - **Local gate — one call**: `uv run python tools/gate.py`; call it by name, never assemble the steps by hand. No CI yet.
 - **Definition of done**: not yet agreed.
 - **Never** `--no-verify`, `--force`, `--no-gpg-sign`, `git reset --hard` without an explicit instruction from the user.
