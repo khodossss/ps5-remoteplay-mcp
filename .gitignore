@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+spike_out/
+snapshot.jpg
+.pytest_cache/
+.ruff_cache/

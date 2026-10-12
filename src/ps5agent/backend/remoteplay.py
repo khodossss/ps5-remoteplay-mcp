@@ -1,0 +1,271 @@
+"""Backend A: pyremoteplay (Remote Play protocol, based on Chiaki)."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import shutil
+import threading
+import time
+from collections import deque
+from pathlib import Path
+
+from .. import fec
+from ..config import Config
+from .base import Button, ConsoleError, ConsoleState, Frame, Side, Status
+
+_LOG = logging.getLogger(__name__)
+_STATUS_TTL_S = 3.0
+
+# pyremoteplay names; Create is SHARE in its enum.
+_BUTTON_NAMES = {b: ("SHARE" if b is Button.CREATE else b.value.upper()) for b in Button}
+
+
+def _patch_pyremoteplay() -> None:
+    """Idempotent fixes for pyremoteplay 0.7.6 against current PS5 firmware and libraries."""
+    # DEBUG logs of pyremoteplay print the handshake key and ECDH secret — never let them through.
+    logging.getLogger("pyremoteplay").setLevel(max(logging.INFO, logging.getLogger("pyremoteplay").level))
+    fec.install()  # lost-packet recovery; without it a single lost packet drops the frame (Wi-Fi)
+
+    from pyremoteplay.protobuf import ProtoHandler
+
+    if getattr(ProtoHandler.big_payload, "_ps5agent", False):
+        return
+    original = ProtoHandler.big_payload
+
+    def big_payload(*args, client_version: int = 7, **kwargs):
+        # The network test sends client_version=7; PS5 answers "version not accepted".
+        # chiaki-ng's senkusha sends 9 there.
+        return original(*args, client_version=9 if client_version == 7 else client_version, **kwargs)
+
+    big_payload._ps5agent = True
+    ProtoHandler.big_payload = staticmethod(big_payload)
+
+
+def _use_profile_dir(cfg: Config) -> None:
+    from pyremoteplay.profile import Profiles
+
+    cfg.config_dir.mkdir(parents=True, exist_ok=True)
+    legacy = Path.home() / ".pyremoteplay" / ".profile.json"
+    if not cfg.profile_path.exists() and legacy.exists():
+        shutil.copy2(legacy, cfg.profile_path)
+    if os.name == "posix":
+        os.chmod(cfg.config_dir, 0o700)
+        if cfg.profile_path.exists():
+            os.chmod(cfg.profile_path, 0o600)
+    Profiles.set_default_path(str(cfg.profile_path))
+
+
+def _make_receiver():
+    from pyremoteplay.receiver import QueueReceiver
+
+    class VideoOnlyReceiver(QueueReceiver):
+        """Keeps the newest decoded video frames with ids and timestamps; drops audio."""
+
+        def __init__(self) -> None:
+            super().__init__(max_frames=4)
+            self.lock = threading.Lock()
+            self.frame_id = 0
+            self.frame_ts = 0.0
+            self.arrivals: deque[float] = deque(maxlen=120)
+
+        def _get_audio_codec(self, header: bytes) -> None:  # audio unused; its resampler breaks on av 13
+            return None
+
+        def handle_audio_data(self, buf: bytes) -> None:
+            return None
+
+        def handle_video(self, frame) -> None:  # called from pyremoteplay's decoder thread
+            now = time.monotonic()
+            with self.lock:
+                self.frame_id += 1
+                self.frame_ts = now
+                self.arrivals.append(now)
+            super().handle_video(frame)
+
+        def newest(self):
+            with self.lock:
+                return self.frame_id, self.frame_ts, self.get_latest_video_frame()
+
+        def fps(self) -> float:
+            with self.lock:
+                recent = [t for t in self.arrivals if t > time.monotonic() - 2.0]
+            return len(recent) / 2.0
+
+    return VideoOnlyReceiver()
+
+
+class RemotePlayBackend:
+    def __init__(self, cfg: Config) -> None:
+        _patch_pyremoteplay()
+        _use_profile_dir(cfg)
+        from pyremoteplay import RPDevice
+
+        self.cfg = cfg
+        self.device = RPDevice(cfg.host)
+        self.receiver = None
+        self._status_at = 0.0
+        self._console = ConsoleState.UNKNOWN
+        self._rgb_cache: tuple[int, Frame] | None = None
+        self._pressed: set[Button] = set()
+
+    # --- helpers ---------------------------------------------------------
+    def _user(self) -> str:
+        users = self.device.get_users()
+        if self.cfg.user:
+            if self.cfg.user not in users:
+                raise ConsoleError(f"PSN user {self.cfg.user!r} is not registered with this console")
+            return self.cfg.user
+        if not users:
+            raise ConsoleError("no PSN user registered with this console; run `ps5agent register`")
+        return users[0]
+
+    async def _refresh_console(self, force: bool = False) -> ConsoleState:
+        if force or time.monotonic() - self._status_at > _STATUS_TTL_S:
+            status = await self.device.async_get_status()
+            self._status_at = time.monotonic()
+            if not status:
+                self._console = ConsoleState.UNREACHABLE
+            else:
+                self._console = ConsoleState.AWAKE if self.device.is_on else ConsoleState.STANDBY
+        return self._console
+
+    @property
+    def _session_up(self) -> bool:
+        session = self.device.session
+        return bool(session and session.is_ready and not session.is_stopped)
+
+    def _controller(self):
+        if not self._session_up:
+            raise ConsoleError("no Remote Play session")
+        return self.device.controller
+
+    # --- ConsoleBackend --------------------------------------------------
+    async def connect(self) -> None:
+        if self._session_up:
+            return
+        console = await self._refresh_console(force=True)
+        if console is not ConsoleState.AWAKE:
+            raise ConsoleError(f"console is {console.value}")
+        self.device.disconnect()
+        self.receiver = _make_receiver()
+        session = self.device.create_session(
+            self._user(),
+            receiver=self.receiver,
+            resolution=self.cfg.resolution,
+            fps=self.cfg.fps,
+            quality=self.cfg.quality,
+            loop=asyncio.get_running_loop(),
+        )
+        if session is None:
+            raise ConsoleError("could not create session (profile not found?)")
+        if not await self.device.connect():
+            raise ConsoleError(f"session refused: {getattr(session, 'error', '') or 'connect failed'}")
+        if not await self.device.async_wait_for_session(timeout=20):
+            self.device.disconnect()
+            raise ConsoleError("session did not become ready")
+        deadline = time.monotonic() + 15
+        while self.receiver.frame_id == 0:
+            if time.monotonic() > deadline or session.is_stopped:
+                self.device.disconnect()
+                raise ConsoleError("no video frames received")
+            await asyncio.sleep(0.05)
+        self.device.controller.start()
+        self._pressed = set()
+
+    async def disconnect(self) -> None:
+        try:
+            if self._session_up:
+                await self.release_all()
+        finally:
+            self.device.controller.stop()
+            self.device.disconnect()
+
+    async def status(self) -> Status:
+        try:
+            console = await self._refresh_console()
+        except OSError as err:
+            return Status(ConsoleState.UNREACHABLE, False, detail=str(err))
+        up = self._session_up
+        return Status(
+            console=console,
+            session_up=up,
+            fps=self.receiver.fps() if up and self.receiver else 0.0,
+            last_frame_ts=self.receiver.frame_ts if up and self.receiver and self.receiver.frame_id else None,
+            firmware=self.device.system_version,
+            app=self.device.app_name,
+        )
+
+    def latest_frame(self) -> Frame | None:
+        if self.receiver is None:
+            return None
+        frame_id, ts, av_frame = self.receiver.newest()
+        if av_frame is None:
+            return None
+        if self._rgb_cache and self._rgb_cache[0] == frame_id:
+            return self._rgb_cache[1]
+        frame = Frame(av_frame.to_ndarray(format="rgb24"), frame_id, ts)
+        self._rgb_cache = (frame_id, frame)
+        return frame
+
+    async def set_buttons(self, pressed: set[Button]) -> None:
+        controller = self._controller()
+        for button in self._pressed - pressed:
+            controller.button(_BUTTON_NAMES[button], "release")
+        for button in pressed - self._pressed:
+            controller.button(_BUTTON_NAMES[button], "press")
+        self._pressed = set(pressed)
+
+    async def set_stick(self, side: Side, x: float, y: float) -> None:
+        self._controller().stick(side.value, point=(float(x), float(y)))
+
+    async def set_trigger(self, side: Side, value: float) -> None:
+        from pyremoteplay.stream_packets import FeedbackEvent
+
+        controller = self._controller()
+        level = round(max(0.0, min(1.0, value)) * 255)
+
+        class AnalogEvent(FeedbackEvent):
+            @property
+            def state(self) -> int:
+                return level
+
+        button = FeedbackEvent.Type.L2 if side is Side.LEFT else FeedbackEvent.Type.R2
+        controller._add_event_buffer(AnalogEvent(button, is_active=level > 0))
+        controller._send_event()
+
+    async def release_all(self) -> None:
+        if not self._session_up:
+            self._pressed = set()
+            return
+        controller = self.device.controller
+        for button in Button:
+            controller.button(_BUTTON_NAMES[button], "release")
+        self._pressed = set()
+        for side in Side:
+            controller.stick(side.value, point=(0.0, 0.0))
+            await self.set_trigger(side, 0.0)
+
+    async def wake(self) -> None:
+        console = await self._refresh_console(force=True)
+        if console is ConsoleState.AWAKE:
+            return
+        if console is ConsoleState.UNREACHABLE:
+            raise ConsoleError("console unreachable (is rest-mode networking enabled?)")
+        self.device.wakeup(user=self._user())
+        if not await self.device.async_wait_for_wakeup(timeout=60):
+            raise ConsoleError("console did not wake within 60 s")
+        self._status_at = 0.0
+
+    async def standby(self) -> None:
+        if self._session_up:
+            await self.release_all()
+            ok = await self.device.session.async_standby()
+        else:
+            ok = await self.device.standby(self._user())
+        self.device.controller.stop()
+        self.device.disconnect()
+        self._status_at = 0.0
+        if not ok:
+            raise ConsoleError("standby request was not acknowledged")
