@@ -12,6 +12,8 @@ Only the protocol modules are included (no GUI, gamepad or CLI). Changes made fo
   loop condition in `wait()`, `standby()` and `async_standby()` that made them return immediately.
 - `receiver/__init__.py`: codec flags work with both old (`LOW_DELAY`) and new (`low_delay`) PyAV names.
 - `stream.py`: the network-test BIG message sends client version 9 (PS5 rejects 7), as chiaki-ng does.
+- `stream.py`: `Protocol.sendto` hands sends from other threads (controller worker, AV executor) to the
+  event loop and skips a closed transport; cross-thread sends killed the stream on Windows.
 - `av.py`: forward error correction uses `ps5agent.fec` (pure numpy) instead of the `pyjerasure`
   C extension.
 - `device.py`: removed the PlayStation Store cover-art lookup (dropped the `pyps4-2ndscreen` dependency).

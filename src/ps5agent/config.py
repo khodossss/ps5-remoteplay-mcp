@@ -23,6 +23,7 @@ class Config:
     daemon_host: str = "127.0.0.1"
     daemon_port: int = 9395
     max_hold_ms: int = 10_000
+    idle_exit_s: int = 600  # daemon exits (session closes) after this long without calls; 0 = never
     fake_frames: str | None = None
     config_dir: Path = field(default=CONFIG_DIR)
 
@@ -69,6 +70,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         daemon_host=daemon_host or "127.0.0.1",
         daemon_port=int(port),
         max_hold_ms=int(env.get("PS5_MAX_HOLD_MS", "10000")),
+        idle_exit_s=int(env.get("PS5_IDLE_EXIT_S", "600")),
         fake_frames=env.get("PS5_FAKE_FRAMES") or None,
         config_dir=Path(env.get("PS5_CONFIG_DIR", CONFIG_DIR)),
     )

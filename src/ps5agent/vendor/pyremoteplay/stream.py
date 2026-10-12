@@ -64,6 +64,8 @@ class RPStream:
             """Callback for connection made."""
             _LOGGER.debug("Connected Stream")
             self.transport = transport
+            self._loop = asyncio.get_running_loop()
+            self._loop_thread = threading.get_ident()
 
         def datagram_received(self, data, addr):  # pylint: disable=unused-argument
             """Callback for data received"""
@@ -73,8 +75,17 @@ class RPStream:
             _LOGGER.error("Stream Protocol Error: %s", exc)
 
         def sendto(self, data, addr):
-            """Send data."""
-            self.transport.sendto(data, addr)
+            """Send data. Thread-safe: the controller worker and the AV executor send from their own
+            threads, and asyncio transports are loop-thread only (a cross-thread send corrupts the
+            proactor's write state on Windows and kills the stream)."""
+            if threading.get_ident() == self._loop_thread:
+                self._sendto(data, addr)
+            else:
+                self._loop.call_soon_threadsafe(self._sendto, data, addr)
+
+        def _sendto(self, data, addr):
+            if self.transport is not None and not self.transport.is_closing():
+                self.transport.sendto(data, addr)
 
         def close(self):
             """Close Protocol"""

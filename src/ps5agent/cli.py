@@ -70,12 +70,11 @@ def cmd_stop(cfg: Config, args: argparse.Namespace) -> None:
     async def main():
         client = DaemonClient(cfg, autostart=False)
         try:
-            await client.shutdown()
+            return await client.shutdown()
         finally:
             await client.aclose()
 
-    asyncio.run(main())
-    print("daemon stopping")
+    print("daemon stopped" if asyncio.run(main()) else "daemon was not running")
 
 
 GUI_UNAVAILABLE = 3

@@ -47,6 +47,7 @@ class FakeBackend:
         self.triggers: dict[Side, float] = {Side.LEFT: 0.0, Side.RIGHT: 0.0}
         self.log: list[tuple[float, str, object]] = []
         self.fail_next: Exception | None = None  # injected failure for tests
+        self.stalled = False  # session up but no new frames, like a frozen Remote Play stream
 
     def _record(self, op: str, arg: object) -> None:
         if self.fail_next is not None:
@@ -67,14 +68,17 @@ class FakeBackend:
             console=ConsoleState.AWAKE if self.awake else ConsoleState.STANDBY,
             session_up=self.connected,
             fps=30.0 if self.connected else 0.0,
-            last_frame_ts=time.monotonic() if self.connected else None,
+            last_frame_ts=self._frame_ts() if self.connected else None,
             firmware="fake",
         )
 
     def latest_frame(self) -> Frame | None:
         if not self.connected:
             return None
-        return Frame(self._frames[self.index], self.frame_id, time.monotonic())
+        return Frame(self._frames[self.index], self.frame_id, self._frame_ts())
+
+    def _frame_ts(self) -> float:
+        return time.monotonic() - (60.0 if self.stalled else 0.0)
 
     async def set_buttons(self, pressed: set[Button]) -> None:
         newly = pressed - self.pressed

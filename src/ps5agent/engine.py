@@ -13,11 +13,30 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from .backend import Button, ConsoleBackend, Side
+from .backend import Button, ConsoleBackend, ConsoleError, Side
 
 _LOG = logging.getLogger(__name__)
 MAX_SEQUENCE_MS = 60_000
 MAX_SEQUENCE_STEPS = 100
+PRESS_MS = 80
+# Short taps of these were missed by games in the field; ~250 ms registered reliably.
+LONG_PRESS_MS = 250
+LONG_PRESS_BUTTONS = frozenset({Button.OPTIONS, Button.CREATE, Button.TOUCHPAD, Button.PS})
+
+
+def default_press_ms(button: Button) -> int:
+    return LONG_PRESS_MS if button in LONG_PRESS_BUTTONS else PRESS_MS
+
+
+class InputAbortedError(ConsoleError):
+    """A sequence stopped part-way; the rest of it was dropped, not queued for later."""
+
+    def __init__(self, done: int, total: int, cause: BaseException) -> None:
+        self.done, self.total = done, total
+        reason = str(cause) or type(cause).__name__
+        super().__init__(
+            f"input stopped after {done} of {total} steps ({reason}); the remaining steps were dropped"
+        )
 
 
 @dataclass(frozen=True)
@@ -35,10 +54,11 @@ class Step:
         op = raw.get("op") or raw.get("type")
         if op not in ("press", "hold", "stick", "trigger", "wait"):
             raise ValueError(f"unknown step op {op!r}; use press, hold, stick, trigger or wait")
-        default_ms = 80 if op == "press" else 0
+        button = Button(str(raw["button"]).lower()) if op in ("press", "hold") else None
+        default_ms = default_press_ms(button) if op == "press" else 0
         step = cls(
             op=op,
-            button=Button(str(raw["button"]).lower()) if op in ("press", "hold") else None,
+            button=button,
             side=Side(str(raw["side"]).lower()) if op in ("stick", "trigger") else None,
             x=float(raw.get("x", 0.0)),
             y=float(raw.get("y", 0.0)),
@@ -99,13 +119,11 @@ class InputEngine:
     async def _active(self) -> AsyncIterator[None]:
         """Serialize input; on any exit path that is not clean, release everything."""
         async with self._lock:
-            self._active_since = time.monotonic()
             clean = False
             try:
                 yield
                 clean = True
             finally:
-                self._active_since = None
                 if not clean:
                     # shield: a cancelled request must still get its buttons released
                     await asyncio.shield(self._release())
@@ -114,10 +132,24 @@ class InputEngine:
         if not 0 <= duration_ms <= self.max_hold_ms:
             raise ValueError(f"duration_ms must be within 0..{self.max_hold_ms}")
 
+    @contextlib.asynccontextmanager
+    async def _held(self) -> AsyncIterator[None]:
+        """The watchdog times one held input; waits between inputs are not holds."""
+        self._active_since = time.monotonic()
+        try:
+            yield
+        finally:
+            self._active_since = None
+
     async def _do(self, step: Step) -> None:
         if step.op == "wait":
             await asyncio.sleep(step.duration_ms / 1000)
-        elif step.op in ("press", "hold"):
+            return
+        async with self._held():
+            await self._hold(step)
+
+    async def _hold(self, step: Step) -> None:
+        if step.op in ("press", "hold"):
             self._check_duration(step.duration_ms)
             self._pressed = self._pressed | {step.button}
             await self.backend.set_buttons(self._pressed)
@@ -142,7 +174,7 @@ class InputEngine:
                 await self.backend.set_trigger(step.side, 0.0)
 
     # --- public ops ------------------------------------------------------
-    async def press(self, button: Button, duration_ms: int = 80) -> None:
+    async def press(self, button: Button, duration_ms: int = PRESS_MS) -> None:
         await self.run([Step("press", button=button, duration_ms=duration_ms)])
 
     async def hold(self, button: Button, duration_ms: int) -> None:
@@ -167,8 +199,11 @@ class InputEngine:
             if step.op != "wait":
                 self._check_duration(step.duration_ms)
         async with self._active():
-            for step in steps:
-                await self._do(step)
+            for done, step in enumerate(steps):
+                try:
+                    await self._do(step)
+                except Exception as err:
+                    raise InputAbortedError(done, len(steps), err) from err
 
     async def release_all(self) -> None:
         # Not behind the lock on purpose: must work while a hold is in progress.

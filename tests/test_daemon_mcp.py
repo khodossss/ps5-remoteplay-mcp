@@ -91,6 +91,8 @@ TOOLS = {
     "trigger",
     "sequence",
     "release_all",
+    "wait_ready",
+    "disconnect",
     "wake",
     "standby",
     "setup",

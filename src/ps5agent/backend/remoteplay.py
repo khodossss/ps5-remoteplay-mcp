@@ -124,6 +124,18 @@ class RemotePlayBackend:
             raise ConsoleError("no Remote Play session")
         return self.device.controller
 
+    def _send(self, fn, *args, **kwargs) -> None:
+        """One controller send; a failed send means the stream is dead, so drop the session now
+        (the daemon reconnects) instead of letting later input hit a closed transport."""
+        try:
+            fn(*args, **kwargs)
+        except Exception as err:
+            _LOG.warning("input send failed (%s); dropping the session", err)
+            self._pressed = set()
+            self.device.controller.stop()
+            self.device.disconnect()
+            raise ConsoleError(f"Remote Play session lost while sending input: {err}") from err
+
     # --- ConsoleBackend --------------------------------------------------
     async def connect(self) -> None:
         if self._session_up:
@@ -198,13 +210,14 @@ class RemotePlayBackend:
     async def set_buttons(self, pressed: set[Button]) -> None:
         controller = self._controller()
         for button in self._pressed - pressed:
-            controller.button(_BUTTON_NAMES[button], "release")
+            self._send(controller.button, _BUTTON_NAMES[button], "release")
+            self._pressed.discard(button)
         for button in pressed - self._pressed:
-            controller.button(_BUTTON_NAMES[button], "press")
-        self._pressed = set(pressed)
+            self._send(controller.button, _BUTTON_NAMES[button], "press")
+            self._pressed.add(button)
 
     async def set_stick(self, side: Side, x: float, y: float) -> None:
-        self._controller().stick(side.value, point=(float(x), float(y)))
+        self._send(self._controller().stick, side.value, point=(float(x), float(y)))
 
     async def set_trigger(self, side: Side, value: float) -> None:
         from ..vendor.pyremoteplay.stream_packets import FeedbackEvent
@@ -219,18 +232,16 @@ class RemotePlayBackend:
 
         button = FeedbackEvent.Type.L2 if side is Side.LEFT else FeedbackEvent.Type.R2
         controller._add_event_buffer(AnalogEvent(button, is_active=level > 0))
-        controller._send_event()
+        self._send(controller._send_event)
 
     async def release_all(self) -> None:
         if not self._session_up:
             self._pressed = set()
             return
-        controller = self.device.controller
-        for button in Button:
-            controller.button(_BUTTON_NAMES[button], "release")
-        self._pressed = set()
+        # Only what we pressed: a release burst for every button floods the stream for nothing.
+        await self.set_buttons(set())
         for side in Side:
-            controller.stick(side.value, point=(0.0, 0.0))
+            await self.set_stick(side, 0.0, 0.0)
             await self.set_trigger(side, 0.0)
 
     async def wake(self) -> None:

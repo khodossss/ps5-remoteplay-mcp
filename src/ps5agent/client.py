@@ -15,6 +15,7 @@ import httpx
 from .config import Config
 
 START_TIMEOUT_S = 20.0
+STOP_TIMEOUT_S = 15.0
 
 
 class DaemonError(RuntimeError):
@@ -29,6 +30,7 @@ class Snapshot:
     width: int
     height: int
     warnings: list[str]
+    screen_changed: bool | None = None  # after input: does the screen differ from before it?
 
     @classmethod
     def from_json(cls, data: dict) -> Snapshot:
@@ -39,10 +41,13 @@ class Snapshot:
             data["width"],
             data["height"],
             data.get("warnings", []),
+            data.get("screen_changed"),
         )
 
     def describe(self) -> str:
         text = f"frame_id={self.frame_id} age_ms={self.age_ms} size={self.width}x{self.height}"
+        if self.screen_changed is not None:
+            text += f" screen_changed={str(self.screen_changed).lower()}"
         return text + "".join(f"\nWARNING: {w}" for w in self.warnings)
 
 
@@ -91,13 +96,19 @@ class DaemonClient:
     async def _call(self, method: str, path: str, **kwargs) -> dict:
         await self.ensure()
         response = await self._http.request(method, path, **kwargs)
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError:
+            raise DaemonError(f"HTTP {response.status_code}: {response.text[:300]}") from None
         if response.status_code >= 400 or data.get("ok") is False:
             raise DaemonError(data.get("error", f"HTTP {response.status_code}"))
         return data
 
     async def status(self) -> dict:
         return await self._call("GET", "/status")
+
+    async def wait_ready(self, timeout_s: float = 30.0) -> dict:
+        return await self._call("GET", "/wait_ready", params={"timeout_s": timeout_s})
 
     async def snapshot(self, max_width: int = 1024, quality: int = 80) -> Snapshot:
         data = await self._call("GET", "/snapshot", params={"max_width": max_width, "quality": quality})
@@ -117,6 +128,18 @@ class DaemonClient:
     async def latency(self, samples: int = 10) -> dict:
         return await self._call("POST", "/latency", json={"samples": samples})
 
-    async def shutdown(self) -> None:
-        self.autostart = False
-        await self._call("POST", "/shutdown")
+    async def shutdown(self) -> bool:
+        """Stop the daemon and wait until it is gone, so a later call can start a fresh one.
+        False when no daemon was running."""
+        try:
+            await self._http.post("/shutdown")
+        except httpx.TransportError:
+            return False
+        deadline = time.monotonic() + STOP_TIMEOUT_S
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.3)
+            try:
+                await self._http.get("/status")
+            except httpx.TransportError:
+                return True
+        raise DaemonError(f"daemon did not stop within {STOP_TIMEOUT_S:.0f} s; see {self.cfg.log_path}")
