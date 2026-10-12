@@ -170,7 +170,7 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 
 ## Git workflow
 - **Conventional commits** (`feat:`/`fix:`/`chore:`/`refactor:`/`docs:`/`test:`). Branches `feat/…`, `fix/…`, `chore/…`. PR titles in the same format.
-- **No co-author trailer** unless the user asks.
+- **No AI attribution**: no `Co-Authored-By` trailers for Claude or other agents in commits, no "Generated with" lines in PR bodies — the repository lists the owner as its only contributor (owner's decision).
 - **Forge**: GitHub, `khodossss/ps5-remoteplay-mcp` (public); CLI `gh` — observe with `gh pr list`, `gh pr checks <n>`.
 - **Local gate — one call**: `uv run python tools/gate.py`; call it by name, never assemble the steps by hand. No CI yet.
 - **Definition of done**: not yet agreed.
