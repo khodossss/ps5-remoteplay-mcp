@@ -19,6 +19,7 @@ from .engine import InputEngine, Step
 
 _LOG = logging.getLogger(__name__)
 STALE_FRAME_S = 2.0
+STALL_RECONNECT_S = 10.0  # a session with no video this long is treated as dead
 SHUTDOWN = web.AppKey("shutdown", asyncio.Event)
 BACKOFF_MAX_S = 30.0
 WAITING_STATES = ("starting", "connecting", "reconnecting", "stalled")
@@ -42,6 +43,7 @@ class Daemon:
         self._wakeup = asyncio.Event()
         self._stopping = False
         self._was_up = False
+        self.session_epoch = 0  # bumped on every session loss
 
     # --- session supervision ---------------------------------------------
     async def start(self) -> None:
@@ -77,16 +79,22 @@ class Daemon:
                 await self._sleep(5)
                 continue
             if status.session_up:
-                stale = (
-                    status.last_frame_ts is None or time.monotonic() - status.last_frame_ts > STALE_FRAME_S
-                )
+                frame_age = None if status.last_frame_ts is None else time.monotonic() - status.last_frame_ts
+                stale = frame_age is None or frame_age > STALE_FRAME_S
                 self.state, self._was_up, backoff = ("stalled" if stale else "up"), True, 1.0
+                if frame_age is not None and frame_age > STALL_RECONNECT_S:
+                    self.last_error = f"no video for {frame_age:.0f} s; reconnecting"
+                    _LOG.warning("%s", self.last_error)
+                    with contextlib.suppress(Exception):
+                        await self.backend.disconnect()
                 await self._sleep(0.5)
                 continue
             if self._was_up:
-                # session dropped under us: make sure nothing is left pressed
+                # session dropped under us: make sure nothing is left pressed, and end the epoch so
+                # an input still running cannot continue into the next session
                 await self.engine.release_all()
                 self._was_up = False
+                self.session_epoch += 1
             if status.console is ConsoleState.STANDBY:
                 self.state, self.last_error = "standby", ""
                 await self._sleep(5)
@@ -95,7 +103,7 @@ class Daemon:
                 self.state, self.last_error = status.console.value, status.detail
                 await self._sleep(5)
                 continue
-            self.state = "reconnecting" if self.state in ("up", "reconnecting") else "connecting"
+            self.state = "reconnecting" if self.state in ("up", "stalled", "reconnecting") else "connecting"
             try:
                 await self.backend.connect()
                 self.last_error = ""
@@ -280,7 +288,13 @@ def build_app(daemon: Daemon) -> web.Application:
             raise ValueError(f"unknown op {op!r}")
         await daemon.require_ready()
         before = daemon.backend.latest_frame()
-        await daemon.engine.run(steps)
+        epoch = daemon.session_epoch
+
+        def same_session() -> None:
+            if daemon.session_epoch != epoch:
+                raise ConsoleError("the Remote Play session was lost during this input")
+
+        await daemon.engine.run(steps, same_session)
         result: dict = {"ok": True}
         ms = body.get("snapshot_after_ms")
         if ms is not None:

@@ -19,6 +19,14 @@ _STATUS_TTL_S = 3.0
 _BUTTON_NAMES = {b: ("SHARE" if b is Button.CREATE else b.value.upper()) for b in Button}
 
 
+def _stream_open(session) -> bool:
+    """A closed UDP transport (fatal write error, socket gone) leaves the session looking ready;
+    only the transport tells that input and video are dead."""
+    protocol = getattr(getattr(session, "stream", None), "_protocol", None)
+    transport = getattr(protocol, "transport", None)
+    return transport is not None and not transport.is_closing()
+
+
 def _make_receiver():
     from ..vendor.pyremoteplay.receiver import QueueReceiver
 
@@ -117,7 +125,7 @@ class RemotePlayBackend:
     @property
     def _session_up(self) -> bool:
         session = self.device.session if self.device else None
-        return bool(session and session.is_ready and not session.is_stopped)
+        return bool(session and session.is_ready and not session.is_stopped and _stream_open(session))
 
     def _controller(self):
         if not self._session_up:
@@ -128,6 +136,8 @@ class RemotePlayBackend:
         """One controller send; a failed send means the stream is dead, so drop the session now
         (the daemon reconnects) instead of letting later input hit a closed transport."""
         try:
+            if not _stream_open(self.device.session):
+                raise ConsoleError("the video/input stream is closed")
             fn(*args, **kwargs)
         except Exception as err:
             _LOG.warning("input send failed (%s); dropping the session", err)
@@ -217,7 +227,11 @@ class RemotePlayBackend:
             self._pressed.add(button)
 
     async def set_stick(self, side: Side, x: float, y: float) -> None:
-        self._send(self._controller().stick, side.value, point=(float(x), float(y)))
+        controller = self._controller()
+        controller.stick(side.value, point=(float(x), float(y)))
+        # send now, from this thread: left to the controller's worker thread, a centering sent
+        # right before a disconnect is dropped with the closed stream
+        self._send(controller.update_sticks)
 
     async def set_trigger(self, side: Side, value: float) -> None:
         from ..vendor.pyremoteplay.stream_packets import FeedbackEvent

@@ -47,7 +47,7 @@ class FakeBackend:
         self.triggers: dict[Side, float] = {Side.LEFT: 0.0, Side.RIGHT: 0.0}
         self.log: list[tuple[float, str, object]] = []
         self.fail_next: Exception | None = None  # injected failure for tests
-        self.stalled = False  # session up but no new frames, like a frozen Remote Play stream
+        self.stall_s = 0.0  # >0: session up but the newest frame is this old, like a frozen stream
 
     def _record(self, op: str, arg: object) -> None:
         if self.fail_next is not None:
@@ -78,7 +78,7 @@ class FakeBackend:
         return Frame(self._frames[self.index], self.frame_id, self._frame_ts())
 
     def _frame_ts(self) -> float:
-        return time.monotonic() - (60.0 if self.stalled else 0.0)
+        return time.monotonic() - self.stall_s
 
     async def set_buttons(self, pressed: set[Button]) -> None:
         newly = pressed - self.pressed

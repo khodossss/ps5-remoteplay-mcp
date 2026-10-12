@@ -70,7 +70,7 @@ class DaemonClient:
     def __init__(self, cfg: Config, autostart: bool = True) -> None:
         self.cfg = cfg
         self.autostart = autostart
-        self._http = httpx.AsyncClient(base_url=cfg.daemon_url, timeout=httpx.Timeout(90.0, connect=2.0))
+        self._http = httpx.AsyncClient(base_url=cfg.daemon_url, timeout=httpx.Timeout(150.0, connect=2.0))
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -95,7 +95,12 @@ class DaemonClient:
 
     async def _call(self, method: str, path: str, **kwargs) -> dict:
         await self.ensure()
-        response = await self._http.request(method, path, **kwargs)
+        try:
+            response = await self._http.request(method, path, **kwargs)
+        except httpx.TimeoutException:
+            raise DaemonError(
+                f"the daemon did not answer {path} in time; input may be partly done - take a snapshot"
+            ) from None
         try:
             data = response.json()
         except ValueError:

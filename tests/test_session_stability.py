@@ -73,16 +73,39 @@ async def _until(predicate, timeout_s: float = 3.0) -> None:
 
 async def test_stalled_stream_is_reported_and_input_refused(daemon, client, fake):
     daemon.ready_timeout_s = 0.3
-    fake.stalled = True
+    fake.stall_s = 5.0  # past STALE_FRAME_S, short of STALL_RECONNECT_S
     await _until(lambda: daemon.state == "stalled")
     assert (await client.status())["daemon"] == "stalled"
     sent = len(fake.log)
     with pytest.raises(DaemonError, match="not live"):
         await client.input("press", button="cross")
     assert len(fake.log) == sent  # refused, not queued for later
-    fake.stalled = False
+    fake.stall_s = 0.0
     assert (await client.wait_ready(5))["ready"] is True
     assert (await client.status())["daemon"] == "up"
+    assert daemon.last_call > time.monotonic() - 1  # every request counts against the idle exit
+
+
+async def test_long_stall_forces_a_reconnect(daemon, fake):
+    fake.stall_s = 60.0
+    await _until(lambda: daemon.session_epoch >= 1)
+    fake.stall_s = 0.0
+    await _until(lambda: daemon.state == "up" and fake.connected)
+
+
+async def test_input_does_not_continue_into_a_new_session(daemon, client, fake):
+    steps = [
+        {"op": "press", "button": "right", "duration_ms": 10},
+        {"op": "wait", "duration_ms": 1_500},
+        {"op": "press", "button": "right", "duration_ms": 10},
+    ]
+    task = asyncio.create_task(client.input("sequence", steps=steps))
+    await _until(lambda: fake.index == 1)
+    fake.connected = False  # stream dies; the supervisor notices and reconnects during the wait
+    await _until(lambda: daemon.session_epoch == 1 and fake.connected)
+    with pytest.raises(DaemonError, match=r"after 2 of 3 steps \(the Remote Play session was lost"):
+        await task
+    assert fake.index == 1 and fake.idle
 
 
 async def test_unexpected_daemon_error_is_readable(daemon, client, monkeypatch):
@@ -136,6 +159,7 @@ async def test_mcp_disconnect_stops_daemon_and_next_call_restarts_it(tmp_path, m
             assert "session_up" in _text(await mcp_client.call_tool("status", {}))  # autostarted again
             assert "disconnected" in _text(await mcp_client.call_tool("disconnect", {}))
     finally:
+        await dc.shutdown()  # never leave a detached daemon behind a failed assertion
         await dc.aclose()
 
 
@@ -160,3 +184,34 @@ async def test_stream_sends_from_other_threads_run_on_the_loop():
     protocol.sendto(b"y", ("127.0.0.1", 9))
     await _until(lambda: len(transport.threads) == 2)
     assert set(transport.threads) == {threading.get_ident()}
+
+
+async def test_stream_close_from_a_thread_runs_after_queued_sends():
+    class Transport:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+
+        def is_closing(self) -> bool:
+            return "close" in self.events
+
+        def sendto(self, data, addr) -> None:
+            self.events.append("send")
+
+        def close(self) -> None:
+            self.events.append("close")
+
+    protocol = RPStream.Protocol(stream=None)
+    transport = Transport()
+    protocol.connection_made(transport)
+
+    def disconnect_from_worker() -> None:  # what Session.stop does from an executor thread
+        protocol.sendto(b"bye", ("127.0.0.1", 9))
+        protocol.close()
+        protocol.sendto(b"late", ("127.0.0.1", 9))
+
+    worker = threading.Thread(target=disconnect_from_worker)
+    worker.start()
+    worker.join()
+    await _until(lambda: "close" in transport.events)
+    await asyncio.sleep(0.05)
+    assert transport.events == ["send", "close"]  # final message out, nothing after the close

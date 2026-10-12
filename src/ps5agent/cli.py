@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=cmd_snapshot)
     p = sub.add_parser("press", help="tap a button")
     p.add_argument("button", choices=[b.value for b in Button])
-    p.add_argument("--duration-ms", type=int, default=80)
+    p.add_argument("--duration-ms", type=int, help="default 80 ms; 250 ms for options/create/touchpad/ps")
     p.set_defaults(fn=cmd_press)
     p = sub.add_parser("latency", help="median press-to-screen latency (start on the home screen)")
     p.add_argument("-n", "--samples", type=int, default=10)

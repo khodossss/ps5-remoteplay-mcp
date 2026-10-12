@@ -10,7 +10,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
 from .backend import Button, ConsoleBackend, ConsoleError, Side
@@ -190,7 +190,8 @@ class InputEngine:
             [Step.parse({"op": "trigger", "side": side, "value": value, "duration_ms": duration_ms})]
         )
 
-    async def run(self, steps: list[Step]) -> None:
+    async def run(self, steps: list[Step], guard: Callable[[], None] | None = None) -> None:
+        """`guard` runs before each step and raises to stop the rest (e.g. the session changed)."""
         if len(steps) > MAX_SEQUENCE_STEPS:
             raise ValueError(f"at most {MAX_SEQUENCE_STEPS} steps per sequence")
         if sum(s.duration_ms for s in steps) > MAX_SEQUENCE_MS:
@@ -201,6 +202,8 @@ class InputEngine:
         async with self._active():
             for done, step in enumerate(steps):
                 try:
+                    if guard is not None:
+                        guard()
                     await self._do(step)
                 except Exception as err:
                     raise InputAbortedError(done, len(steps), err) from err
