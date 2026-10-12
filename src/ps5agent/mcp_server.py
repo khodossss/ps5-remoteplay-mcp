@@ -22,6 +22,14 @@ INSTRUCTIONS = """\
 You control a real PlayStation 5 through Remote Play: you see its screen and press its gamepad.
 - Take a `snapshot` before acting, and pass `snapshot_after_ms` (300-800) to input tools to see the result
   in the same call. Each round trip takes seconds: this is for menus and turn-based play, not reflexes.
+- After input the snapshot says `screen_changed`. For slow screens (searches, loading) pass
+  `until_change=true` with a long `snapshot_after_ms` (up to 10000): it returns as soon as the screen
+  changes. If the screen did not change, take another snapshot before pressing again - a repeated press
+  may trigger the next action.
+- If `status` says `stalled` or `reconnecting`, call `wait_ready` instead of sleeping. A failed input
+  reports how many steps ran; the rest was dropped, never sent later - check the screen, then continue.
+- When you are done with the console, call `disconnect` so the user can play. It also disconnects by
+  itself after 10 minutes without calls.
 - To leave a system screen or go back, press `circle`. `ps` opens the control center; `options` opens
   context menus. Confirm is `cross`.
 - Never confirm a purchase in PlayStation Store, and never delete games, saves or users, unless the user
@@ -35,6 +43,10 @@ Ms = Annotated[int, Field(ge=0, le=10_000)]
 SnapshotAfter = Annotated[
     int | None,
     Field(ge=0, le=10_000, description="If set, wait this long after the input and return the screen."),
+]
+UntilChange = Annotated[
+    bool,
+    Field(description="With snapshot_after_ms: return as soon as the screen changes (that is the max wait)."),
 ]
 
 
@@ -57,15 +69,27 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
     def show(snap: Snapshot, note: str = "") -> list:
         return [Image(data=snap.jpeg, format="jpeg"), (note + "\n" if note else "") + snap.describe()]
 
-    async def send(op: str, snapshot_after_ms: int | None, note: str, **body) -> list | str:
-        snap = await daemon.input(op, snapshot_after_ms=snapshot_after_ms, **body)
+    async def send(
+        op: str, snapshot_after_ms: int | None, until_change: bool, note: str, **body
+    ) -> list | str:
+        snap = await daemon.input(
+            op, snapshot_after_ms=snapshot_after_ms, until_change=until_change or None, **body
+        )
         return show(snap, note) if snap else note
 
     @tool
     async def status() -> str:
-        """Console and session state: awake/standby, session up, fps, age of the latest frame, firmware."""
+        """Console and session state. daemon: up | stalled (session open, no new frames) | reconnecting |
+        standby | unreachable | not_set_up; plus fps, age of the latest frame, firmware."""
         s = await daemon.status()
         return "\n".join(f"{k}: {v}" for k, v in s.items())
+
+    @tool
+    async def wait_ready(timeout_s: Annotated[int, Field(ge=1, le=60)] = 30) -> str:
+        """Wait until the video stream is live (after a reconnect or a stall), up to timeout_s."""
+        s = await daemon.wait_ready(timeout_s)
+        head = "stream is live" if s.pop("ready") else f"stream still not live after {timeout_s} s"
+        return head + "\n" + "\n".join(f"{k}: {v}" for k, v in s.items())
 
     @tool
     async def snapshot(
@@ -77,23 +101,36 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
 
     @tool
     async def press(
-        button: Button, duration_ms: Ms = 80, snapshot_after_ms: SnapshotAfter = None
+        button: Button,
+        duration_ms: Annotated[
+            int | None,
+            Field(ge=0, le=10_000, description="Default 80 ms; 250 ms for options/create/touchpad/ps."),
+        ] = None,
+        snapshot_after_ms: SnapshotAfter = None,
+        until_change: UntilChange = False,
     ) -> list | str:
         """Tap a gamepad button. cross=confirm, circle=back, d-pad up/down/left/right moves focus."""
         return await send(
             "press",
             snapshot_after_ms,
+            until_change,
             f"pressed {button.value}",
             button=button.value,
             duration_ms=duration_ms,
         )
 
     @tool
-    async def hold(button: Button, duration_ms: Ms, snapshot_after_ms: SnapshotAfter = None) -> list | str:
+    async def hold(
+        button: Button,
+        duration_ms: Ms,
+        snapshot_after_ms: SnapshotAfter = None,
+        until_change: UntilChange = False,
+    ) -> list | str:
         """Hold a button for duration_ms (max 10 s), then release it."""
         return await send(
             "hold",
             snapshot_after_ms,
+            until_change,
             f"held {button.value} {duration_ms} ms",
             button=button.value,
             duration_ms=duration_ms,
@@ -106,11 +143,13 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         y: Annotated[float, Field(ge=-1, le=1, description="-1 up .. 1 down")],
         duration_ms: Ms = 300,
         snapshot_after_ms: SnapshotAfter = None,
+        until_change: UntilChange = False,
     ) -> list | str:
         """Deflect an analog stick for duration_ms, then return it to center."""
         return await send(
             "stick",
             snapshot_after_ms,
+            until_change,
             f"{side.value} stick ({x}, {y}) {duration_ms} ms",
             side=side.value,
             x=x,
@@ -124,11 +163,13 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         value: Annotated[float, Field(ge=0, le=1, description="0 released .. 1 fully pressed")],
         duration_ms: Ms = 300,
         snapshot_after_ms: SnapshotAfter = None,
+        until_change: UntilChange = False,
     ) -> list | str:
         """Press analog L2 (left) or R2 (right) to `value` for duration_ms, then release."""
         return await send(
             "trigger",
             snapshot_after_ms,
+            until_change,
             f"{side.value} trigger {value} {duration_ms} ms",
             side=side.value,
             value=value,
@@ -145,20 +186,29 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
                     '{"op":"wait","duration_ms":400},{"op":"press","button":"cross"}]. '
                     "ops: press/hold {button,duration_ms}, "
                     "stick {side,x,y,duration_ms}, trigger {side,value,duration_ms}, wait {duration_ms}. "
-                    "Max 100 steps, 60 s total."
+                    "Max 100 steps, 60 s total. If a step fails, the error says how many ran; "
+                    "the rest is dropped."
                 )
             ),
         ],
         snapshot_after_ms: SnapshotAfter = None,
+        until_change: UntilChange = False,
     ) -> list | str:
         """Run several inputs in one call (e.g. navigate a menu), optionally returning the screen after."""
-        return await send("sequence", snapshot_after_ms, f"ran {len(steps)} steps", steps=steps)
+        return await send("sequence", snapshot_after_ms, until_change, f"ran {len(steps)} steps", steps=steps)
 
     @tool
     async def release_all() -> str:
         """Release every button, center both sticks, release triggers."""
         await daemon.input("release_all")
         return "all input released"
+
+    @tool
+    async def disconnect() -> str:
+        """End the Remote Play session and stop the background daemon, handing the console back to the
+        user. Any later tool call reconnects (takes a few seconds)."""
+        stopped = await daemon.shutdown()
+        return "disconnected from the PS5" if stopped else "was not connected"
 
     @tool
     async def wake() -> str:

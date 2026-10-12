@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import base64
+import functools
 import logging
 import socket
 import threading
@@ -47,6 +48,23 @@ DATA_LENGTH = 26
 DATA_ACK_LENGTH = 29
 
 
+def _on_loop(method):
+    """Run a stream send on the event loop thread. Senders advance the cipher key position and
+    the TSN before the packet reaches the transport, so serializing only the final sendto still
+    lets executor threads race on that state."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        proto = self._protocol
+        loop = getattr(proto, "_loop", None)
+        if loop is None or threading.get_ident() == proto._loop_thread:
+            return method(self, *args, **kwargs)
+        loop.call_soon_threadsafe(functools.partial(method, self, *args, **kwargs))
+        return None
+
+    return wrapper
+
+
 class RPStream:
     """RP Stream Class."""
 
@@ -64,6 +82,8 @@ class RPStream:
             """Callback for connection made."""
             _LOGGER.debug("Connected Stream")
             self.transport = transport
+            self._loop = asyncio.get_running_loop()
+            self._loop_thread = threading.get_ident()
 
         def datagram_received(self, data, addr):  # pylint: disable=unused-argument
             """Callback for data received"""
@@ -73,11 +93,28 @@ class RPStream:
             _LOGGER.error("Stream Protocol Error: %s", exc)
 
         def sendto(self, data, addr):
-            """Send data."""
-            self.transport.sendto(data, addr)
+            """Send data. Thread-safe: the controller worker and the AV executor send from their own
+            threads, and asyncio transports are loop-thread only (a cross-thread send corrupts the
+            proactor's write state on Windows and kills the stream)."""
+            if threading.get_ident() == self._loop_thread:
+                self._sendto(data, addr)
+            else:
+                self._loop.call_soon_threadsafe(self._sendto, data, addr)
+
+        def _sendto(self, data, addr):
+            if self.transport is not None and not self.transport.is_closing():
+                self.transport.sendto(data, addr)
+
+        def connection_lost(self, exc):
+            if exc is not None:
+                _LOGGER.warning("Stream transport lost: %s", exc)
 
         def close(self):
-            """Close Protocol"""
+            """Close Protocol. Queued behind pending cross-thread sends, so a final
+            disconnect message still goes out before the transport closes."""
+            if threading.get_ident() != getattr(self, "_loop_thread", threading.get_ident()):
+                self._loop.call_soon_threadsafe(self.close)
+                return
             try:
                 self.transport.close()
             # pylint: disable=broad-except
@@ -186,6 +223,7 @@ class RPStream:
         )
         self.send(msg.bytes())
 
+    @_on_loop
     def send_data(self, data: bytes, flag: int, channel: int, proto=False):
         """Send Data Packet."""
         advance_by = 0
@@ -205,6 +243,7 @@ class RPStream:
         )
         self.send(msg.bytes(self._cipher, False, advance_by))
 
+    @_on_loop
     def _send_data_ack(self, ack_tsn: int):
         """Send Data Packet."""
         msg = Packet(
@@ -217,6 +256,7 @@ class RPStream:
         _LOGGER.debug("Sent Data ACK: %s", ack_tsn)
         self.send(msg.bytes(self._cipher, False, DATA_ACK_LENGTH))
 
+    @_on_loop
     def send_feedback(self, feedback_type: int, sequence: int, data=b"", state=None):
         """Send feedback packet."""
         msg = FeedbackPacket(
@@ -228,6 +268,7 @@ class RPStream:
         )
         self.send(msg.bytes(self._cipher, True))
 
+    @_on_loop
     def send_congestion(self, received: int, lost: int):
         """Send congestion packet."""
         msg = CongestionPacket(received=received, lost=lost)
