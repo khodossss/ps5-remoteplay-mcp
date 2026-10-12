@@ -14,7 +14,7 @@ QUALITIES = ("default", "very_low", "low", "medium", "high", "very_high")
 
 @dataclass(frozen=True)
 class Config:
-    host: str | None = None
+    host: str | None = None  # None: use the saved console or discover it on the LAN
     user: str | None = None
     backend: str = "pyremoteplay"
     resolution: str = "720p"
@@ -41,8 +41,6 @@ class Config:
     def validate(self) -> Config:
         if self.backend not in BACKENDS:
             raise ValueError(f"PS5_BACKEND must be one of {BACKENDS}")
-        if self.backend == "pyremoteplay" and not self.host:
-            raise ValueError("PS5_HOST is required for the pyremoteplay backend")
         if self.resolution not in RESOLUTIONS:
             raise ValueError(f"PS5_RESOLUTION must be one of {RESOLUTIONS}")
         if self.fps not in (30, 60):

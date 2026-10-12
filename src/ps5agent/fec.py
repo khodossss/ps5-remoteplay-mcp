@@ -1,7 +1,7 @@
 """Pure-numpy stand-in for `pyjerasure` (Cauchy Reed-Solomon over GF(2^8)).
 
-pyremoteplay imports `pyjerasure` lazily to recover lost video packets (FEC);
-it has no Windows wheels, and without it every lost packet drops the frame —
+The vendored pyremoteplay uses it to recover lost video packets (FEC); the C extension
+`pyjerasure` has no Windows wheels, and without FEC every lost packet drops the frame —
 fatal on Wi-Fi. Only the subset pyremoteplay calls is implemented:
 `Matrix("cauchy", k, m, 8)`, `align_size`, `decode_from_bytes`.
 Math mirrors jerasure: cauchy_original_coding_matrix + jerasure_matrix_decode,
@@ -10,8 +10,6 @@ GF(2^8) with primitive polynomial 0x11d.
 
 from __future__ import annotations
 
-import sys
-import types
 from collections.abc import Iterable
 
 import numpy as np
@@ -138,19 +136,3 @@ def decode_from_bytes(
         blocks[k:] = _encode_blocks(matrix, blocks[:k])
     out = blocks.tobytes()
     return out[: k * size] if data_only else out
-
-
-def install() -> bool:
-    """Register this module as `pyjerasure` unless the real one is importable."""
-    try:
-        import pyjerasure  # noqa: F401
-
-        return False
-    except ImportError:
-        shim = types.ModuleType("pyjerasure")
-        shim.Matrix = Matrix
-        shim.align_size = align_size
-        shim.decode_from_bytes = decode_from_bytes
-        shim.encode_from_bytes = encode_from_bytes
-        sys.modules["pyjerasure"] = shim
-        return True

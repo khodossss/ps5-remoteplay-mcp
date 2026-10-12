@@ -7,7 +7,7 @@ MCP server + daemon: an LLM agent (Claude Code, Codex) sees the screen of a stoc
 - **Focus holon**: #1 «🎮 Мост агента к PS5».
 - **Agent role**: #3 «🤖 Агент-разработчик моста» — adhikarin, steward of the focus holon. Your inbox: `iskron_orient(focus="3")` at session start.
 - **Owner role**: #2 «👤 Владелец моста к PS5» (svatantra 主) — out-of-mandate questions go here as `posed_to` vimarshas.
-- **Stack**: Python 3.12, uv, MCP Python SDK 2.x (`MCPServer`, stdio), aiohttp (daemon API), httpx (client), pyremoteplay (fallback backend chiaki-ng — not implemented); dev host — Windows 11.
+- **Stack**: Python ≥3.12, uv, MCP Python SDK 2.x (`MCPServer`, stdio), aiohttp (daemon API), httpx (client), vendored + patched pyremoteplay 0.7.6 (GPL-3.0), pywebview (sign-in window); fallback backend chiaki-ng not implemented; dev host — Windows 11. Shipped to users as a PyPI package run by `uvx ps5-remoteplay-mcp`. License GPL-3.0-only.
 - **Production statement**: not yet agreed — run the interview (say iskronify) before relying on a cost of failure. Fixed by the owner's handoff: under no failure may a button stay pressed; Remote Play credentials never appear in logs or tool responses; the daemon API listens on 127.0.0.1 only.
 
 ## Persistence rules
@@ -96,7 +96,9 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 | Claim class | Canonical carrier | How to observe | Who can |
 |---|---|---|---|
 | Session / input / frames work | a live PS5 on the host's LAN, through the daemon | `PS5_HOST=<IP> uv run pytest -m hardware`; `uv run ps5agent snapshot` and look at the image | agent (console on the host LAN) |
-| An agent drives the console over MCP | the MCP server over stdio, launched as Claude Code launches it | stdio client `mcp.Client(StdioServerParameters(uv run ps5agent-mcp))` → `call_tool` | agent |
+| An agent drives the console over MCP | the MCP server over stdio, launched as Claude Code launches it | stdio client `mcp.Client(StdioServerParameters(uv run ps5-remoteplay-mcp))` → `call_tool` | agent |
+| Users can install it | the built wheel in a clean `uvx --isolated` env (py3.12–3.14) | `uv build`; `uvx --isolated --python 3.13 --from dist/<wheel> ps5-remoteplay-mcp --help` | agent |
+| Sign-in window links a console | pywebview window + a real PSN account + PIN on the TV | `uv run ps5agent setup --force` | user (PSN password, TV) |
 | Latency | a live PS5 on the home screen | `uv run ps5agent latency` | agent |
 
 **Ceiling**: behaviour inside a running game (analog L2/R2, sticks) needs a game running and the owner's go-ahead; Wi-Fi loss was verified only by artificial packet drops.
@@ -123,12 +125,17 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 | Daemon in the foreground | `PS5_HOST=<IP> uv run ps5agent daemon` |
 | Status / snapshot / press / latency | `uv run ps5agent status \| snapshot -o f.jpg \| press cross \| latency` |
 | Stop the daemon | `uv run ps5agent stop` |
-| Register the host (interactive, PIN from the console) | `uv run ps5agent --host <IP> register` |
-| MCP server (Claude Code launches it) | `uv run ps5agent-mcp` |
+| Link to the console (sign-in window + PIN) | `uv run ps5agent setup` (`--no-gui` for terminal) |
+| MCP server (agents launch it; no args = MCP, args = CLI) | `uv run ps5-remoteplay-mcp` |
+| Build / try as users get it | `uv build` → `uvx --isolated --from dist/<wheel> ps5-remoteplay-mcp --help` |
+| Publish (owner only, needs a PyPI token) | `uv publish` |
 | Format | `uv run ruff format src tests tools/gate.py` |
 
 ## Project structure
-- `src/ps5agent/backend/` — `ConsoleBackend` (base), `remoteplay.py` (pyremoteplay + every compatibility patch), `fake.py` (tests, `PS5_BACKEND=fake`).
+- `src/ps5agent/vendor/pyremoteplay/` — vendored protocol library, patched in place; every change listed in its `NOTICE.md`; excluded from ruff.
+- `src/ps5agent/backend/` — `ConsoleBackend` (base), `remoteplay.py` (session over the vendored library), `fake.py` (tests, `PS5_BACKEND=fake`).
+- `src/ps5agent/console.py` — discovery, saved console (`console.json`), linking (PSN redirect → user, PIN → registration).
+- `src/ps5agent/login_window.py` — pywebview window: Sony sign-in, catches the redirect, PIN form.
 - `src/ps5agent/engine.py` — input: serialization, watchdog, release guarantees.
 - `src/ps5agent/daemon.py` — session, reconnect, loopback HTTP API.
 - `src/ps5agent/client.py` — daemon client + autostart; `mcp_server.py` — tools; `cli.py` — `ps5agent`.
@@ -141,15 +148,17 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 - **External APIs (pyremoteplay, chiaki-ng, MCP SDK)**: class and method names come from the installed package and its source, never from memory.
 - **Test discipline**: unit tests on `FakeBackend`, an MCP contract test per tool, hardware tests `@pytest.mark.hardware` (only with `PS5_HOST`). Check the "nothing held" invariant (`FakeBackend.idle`) in every test of a new input path.
 - **Gotchas**:
-  - pyremoteplay 0.7.6 installs only with the workarounds in `pyproject.toml`: `netifaces` → `netifaces-plus` (no wheel on Windows/py3.12), `pyee<9` (no `ExecutorEventEmitter`), `av<14` (no `Flags.LOW_DELAY`), explicit `async-timeout`/`av`. Do not lift these pins without running the hardware test.
-  - pyremoteplay patches live only in `backend/remoteplay.py::_patch_pyremoteplay` (FEC shim, version 9 in the network-test BIG, log level). New patches go there too. (why: pyremoteplay DEBUG logs print the handshake key and ECDH secret — the `pyremoteplay` logger never goes below INFO.)
-  - Audio is disabled in the receiver: pyremoteplay's resampler breaks on av 13.
+  - pyremoteplay is vendored, not a dependency: the PyPI release pulls `netifaces` (no Windows wheels — breaks `uvx`) and pins old `pyee`/`av`. Fix protocol bugs in `src/ps5agent/vendor/pyremoteplay` directly and add a line to its `NOTICE.md` (GPL requires marking changes). Run the hardware test after any change there.
+  - The vendored library's DEBUG logs print the handshake key and ECDH secret — `console.prepare` keeps logger `ps5agent.vendor.pyremoteplay` at INFO or above. Call `console.prepare(cfg)` before using the library (it also points profiles at `~/.config/ps5-agent/profiles.json`).
+  - Audio is disabled in the receiver (decoder and resampler are skipped).
+  - Sony redirects only to `remoteplay.dl.playstation.net` after sign-in: a normal browser cannot hand the code back. The pywebview window catches it from its own navigation. pywebview needs the main thread of its own process: the MCP `setup` tool spawns `ps5agent setup --gui-only` with stdin=DEVNULL; exit code 3 = no GUI → the tool returns the chat fallback (link → `setup(redirect_url)` → `setup(pin)`).
+  - `[WinError 10048]` on DDP port 9303 in the log is harmless: two processes discovering at once; the library falls back to another port.
   - Windows: after a pyremoteplay session, closing the asyncio loop hangs on a UDP operation — processes holding a session exit via `os._exit` after cleanup (`daemon.run`).
   - The daemon is spawned with `CREATE_BREAKAWAY_FROM_JOB`: MCP clients on Windows kill the server's process tree on exit. Without the flag the daemon dies with every MCP server.
   - aiohttp cancels a handler when the client leaves only with `handler_cancellation=True` (`daemon.make_runner`) — otherwise a hold runs to its end.
   - A killed daemon leaves a zombie session on the console for ~30–40 s: "Another Remote Play session is connected to host". The daemon reconnects by itself on backoff.
   - mcp 2.x: `MCPServer` instead of `FastMCP`; result fields are snake_case (`is_error`, `mime_type`); errors meant for the model are `ToolError` (otherwise the text is masked); enter and exit an in-process `Client` in the test body, not in an async fixture (anyio cancel scope).
-  - Sync `Session.wait()` is broken — use `async_wait` only. The Create button is `SHARE` in pyremoteplay.
+  - The Create button is `SHARE` in pyremoteplay.
   - The console swallows presses during screen-transition animations — not an input bug.
 
 ## What to update when

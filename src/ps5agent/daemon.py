@@ -28,7 +28,9 @@ class Daemon:
         self.cfg = cfg
         self.backend = backend or make_backend(cfg)
         self.engine = InputEngine(self.backend, cfg.max_hold_ms)
-        self.state = "starting"  # starting | connecting | up | reconnecting | standby | unreachable
+        self.state = (
+            "starting"  # starting | connecting | up | reconnecting | standby | unreachable | not_set_up
+        )
         self.last_error = ""
         self.started = time.monotonic()
         self._supervisor: asyncio.Task | None = None
@@ -81,8 +83,8 @@ class Daemon:
                 self.state, self.last_error = "standby", ""
                 await self._sleep(5)
                 continue
-            if status.console is ConsoleState.UNREACHABLE:
-                self.state = "unreachable"
+            if status.console in (ConsoleState.UNREACHABLE, ConsoleState.NOT_SET_UP):
+                self.state, self.last_error = status.console.value, status.detail
                 await self._sleep(5)
                 continue
             self.state = "reconnecting" if self.state in ("up", "reconnecting") else "connecting"
@@ -126,6 +128,8 @@ class Daemon:
         await self.wait_ready()
         frame = self.backend.latest_frame()
         if frame is None:
+            if self.state == "not_set_up":
+                raise ConsoleError("the PS5 is not set up yet: call the `setup` tool first")
             raise ConsoleError(f"no frame available (daemon state: {self.state}; {self.last_error})")
         jpeg, width, height = await asyncio.to_thread(frames.to_jpeg, frame.rgb, max_width, quality)
         age = time.monotonic() - frame.ts
@@ -147,6 +151,7 @@ class Daemon:
 
     async def latency(self, samples: int = 10) -> dict:
         """Median press -> visible change, alternating right/left (home screen is a good bench)."""
+        await self.wait_ready()
         results = []
         for i in range(samples):
             before = self.backend.latest_frame()

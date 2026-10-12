@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
+import subprocess
+import sys
 from typing import Annotated, Literal
 
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from .backend import Button, Side
+from . import console
+from .backend import Button, ConsoleError, Side
 from .client import DaemonClient, DaemonError, Snapshot
 from .config import Config, from_env
 
@@ -23,6 +27,8 @@ You control a real PlayStation 5 through Remote Play: you see its screen and pre
 - Never confirm a purchase in PlayStation Store, and never delete games, saves or users, unless the user
   explicitly asked for exactly that.
 - If a frame is reported black, the content is likely blocked from Remote Play; say so instead of guessing.
+- First run: if `status` says not_set_up, call `setup` and tell the user a PSN sign-in window opened on
+  their screen; they sign in there and type the PIN shown on the PS5.
 """
 
 Ms = Annotated[int, Field(ge=0, le=10_000)]
@@ -43,7 +49,7 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         async def wrapper(*args, **kwargs):
             try:
                 return await fn(*args, **kwargs)
-            except DaemonError as err:
+            except (DaemonError, ConsoleError) as err:
                 raise ToolError(str(err)) from err
 
         return mcp.tool(structured_output=False)(wrapper)
@@ -166,7 +172,66 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         await daemon.standby()
         return "console is going to rest mode"
 
+    @tool
+    async def setup(
+        redirect_url: Annotated[
+            str | None,
+            Field(
+                description="Fallback flow only: the full address the browser landed on after PSN sign-in."
+            ),
+        ] = None,
+        pin: Annotated[
+            str | None, Field(description="Fallback flow only: the 8-digit PIN from the PS5.")
+        ] = None,
+    ) -> str:
+        """First-time setup: find the PS5 on the network and link this computer to it. Opens a window on
+        the user's screen for PSN sign-in and the PIN shown on the TV. Call when status says not_set_up."""
+        return await run_setup(cfg, redirect_url, pin)
+
     return mcp
+
+
+async def run_setup(cfg: Config, redirect_url: str | None = None, pin: str | None = None) -> str:
+    from .cli import GUI_UNAVAILABLE
+
+    console.prepare(cfg)
+    host = await console.resolve_host(cfg, rediscover=not cfg.host)
+    if pin:
+        user = console.pending_user(cfg)
+        if user is None:
+            raise ConsoleError(
+                "sign in first: call setup(redirect_url=...) with the address after PSN sign-in"
+            )
+        await asyncio.to_thread(console.link, cfg, host, user, pin)
+        return f"Linked to the PS5 at {host}. The session connects in a few seconds; take a snapshot."
+    if redirect_url:
+        user = await asyncio.to_thread(console.add_user_from_redirect, cfg, redirect_url)
+        return (
+            f"Signed in as {user}. Ask the user to open Settings > System > Remote Play > Link Device on "
+            "the PS5 and tell you the 8-digit PIN, then call setup(pin=...)."
+        )
+    if console.is_set_up(cfg):
+        return f"Already linked to the PS5 at {host}."
+    # The window needs the main thread of its own process; stdin must not be the MCP stdio pipe.
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "ps5agent", "setup", "--gui-only",
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )  # fmt: skip
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
+    except TimeoutError:
+        proc.kill()
+        raise ConsoleError("the sign-in window was open for 15 minutes without finishing") from None
+    if proc.returncode == 0:
+        return f"Linked to the PS5 at {host}. The session connects in a few seconds; take a snapshot."
+    if proc.returncode == GUI_UNAVAILABLE:
+        return (
+            "No sign-in window can be opened here, so do it in chat. 1) Give the user this link to sign in "
+            f"to PSN: {console.login_url()} 2) Ask them to paste the full address of the page they land on "
+            "(it may look like an error page) and call setup(redirect_url=...). 3) Then the PIN."
+        )
+    tail = out.decode(errors="replace").strip().splitlines()[-1:] or ["unknown error"]
+    raise ConsoleError(f"setup did not complete: {tail[0]}")
 
 
 def main() -> None:

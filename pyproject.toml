@@ -3,24 +3,26 @@ name = "ps5-remoteplay-mcp"
 version = "0.1.0"
 description = "MCP server that lets an LLM agent see and drive a stock PS5 over Remote Play"
 readme = "README.md"
-license = "MIT"
+license = "GPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
-    "aiohttp>=3.14.5",
-    "async-timeout>=5.0.1",
-    # PyAV >=14 dropped codec Flags.LOW_DELAY that pyremoteplay uses
-    "av>=12,<14",
-    "httpx>=0.28.1",
+    "aiohttp>=3.9",
+    "av>=12",
+    "cryptography>=41",
+    "httpx>=0.27",
     "mcp>=2.3.0",
-    "netifaces-plus>=0.12.5",
-    "numpy>=2.5.4",
-    "pillow>=12.3.0",
-    # pyee>=9 removed top-level ExecutorEventEmitter that pyremoteplay imports
-    "pyee>=8.1,<9",
-    "pyremoteplay>=0.7.6",
+    "numpy>=1.26",
+    "pillow>=10",
+    "protobuf>=4.21",
+    "psutil>=5.9",
+    "pycryptodomex>=3.19",
+    "pyee>=9",
+    "pywebview>=5",
+    "requests>=2.31",
 ]
 
 [project.scripts]
+ps5-remoteplay-mcp = "ps5agent.cli:entry"
 ps5agent = "ps5agent.cli:main"
 ps5agent-mcp = "ps5agent.mcp_server:main"
 
@@ -30,10 +32,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ps5agent"]
-
-[tool.uv]
-# netifaces 0.11 has no Windows wheels for py3.12; netifaces-plus ships the same `netifaces` module
-override-dependencies = ["netifaces; sys_platform == 'never'"]
 
 [dependency-groups]
 dev = [
@@ -50,6 +48,7 @@ markers = ["hardware: needs a real PS5 (set PS5_HOST)"]
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+extend-exclude = ["src/ps5agent/vendor", "tools/spike.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "I", "N", "UP", "RUF", "ASYNC"]

@@ -1,4 +1,4 @@
-"""`ps5agent` CLI: daemon | status | snapshot | press | latency | register | stop."""
+"""`ps5agent` CLI: setup | daemon | status | snapshot | press | latency | stop."""
 
 from __future__ import annotations
 
@@ -78,41 +78,55 @@ def cmd_stop(cfg: Config, args: argparse.Namespace) -> None:
     print("daemon stopping")
 
 
-def cmd_register(cfg: Config, args: argparse.Namespace) -> None:
-    """Link this host to the console: PSN sign-in, then the PIN from the console screen."""
-    from pyremoteplay import RPDevice
-    from pyremoteplay.oauth import get_login_url
-    from pyremoteplay.profile import Profiles
+GUI_UNAVAILABLE = 3
 
-    from .backend.remoteplay import _patch_pyremoteplay, _use_profile_dir
 
-    if not cfg.host:
-        sys.exit("set PS5_HOST or pass --host")
-    _patch_pyremoteplay()
-    _use_profile_dir(cfg)
-    device = RPDevice(cfg.host)
-    if not device.get_status():
-        sys.exit(f"console at {cfg.host} is not reachable")
-    profiles = Profiles.load()
-    user = cfg.user if cfg.user in profiles.usernames else None
-    if user is None:
-        print(f"1. Open this URL and sign in to PSN:\n\n{get_login_url()}\n")
-        redirect = input(
-            "2. Paste the full URL of the page you land on (it may look like an error page):\n> "
-        )
-        profile = profiles.new_user(redirect.strip())
-        if profile is None:
-            sys.exit("could not read the PSN account from that URL")
-        user = profile.name
-    pin = input(
-        "3. On the PS5: Settings > System > Remote Play > Link Device. Enter the 8-digit PIN:\n> "
-    ).strip()
-    if not (pin.isdigit() and len(pin) == 8):
-        sys.exit("PIN must be 8 digits")
-    if not device.register(user, pin, profiles=profiles):
-        sys.exit("registration failed")
-    _use_profile_dir(cfg)  # re-apply file permissions after save
-    print(f"registered PSN user {user}; credentials in {cfg.profile_path}")
+def cmd_setup(cfg: Config, args: argparse.Namespace) -> None:
+    """Find the console and link this computer to it: PSN sign-in, then the PIN from the TV."""
+    import webbrowser
+
+    from . import console
+    from .backend.base import ConsoleError
+
+    console.prepare(cfg)
+    try:
+        host = asyncio.run(console.resolve_host(cfg, rediscover=not cfg.host))
+    except ConsoleError as err:
+        sys.exit(f"error: {err}")
+    print(f"PS5 found at {host}")
+    if console.is_set_up(cfg) and not args.force:
+        print("this computer is already linked; pass --force to link another PSN user")
+        return
+    user = console.pending_user(cfg)
+    if not args.no_gui:
+        try:
+            from . import login_window
+
+            linked = login_window.run(cfg, host, user)
+        except Exception as err:  # no webview backend (headless Linux, missing WebView2, ...)
+            print(f"sign-in window unavailable ({err}); falling back to the browser")
+        else:
+            if not linked:
+                sys.exit("setup was not completed")
+            print(f"linked; credentials saved in {cfg.profile_path}")
+            return
+    if args.gui_only or not sys.stdin.isatty():
+        sys.exit(GUI_UNAVAILABLE)
+    try:
+        if user is None:
+            url = console.login_url()
+            print(f"1. Sign in to PSN in your browser (opening it now):\n\n{url}\n")
+            webbrowser.open(url)
+            redirect = input(
+                "2. Paste the full address of the page you land on (may look like an error):\n> "
+            )
+            user = console.add_user_from_redirect(cfg, redirect)
+            print(f"signed in as {user}")
+        pin = input("3. On the PS5: Settings > System > Remote Play > Link Device. 8-digit PIN:\n> ")
+        console.link(cfg, host, user, pin)
+    except ConsoleError as err:
+        sys.exit(f"error: {err}")
+    print(f"linked; credentials saved in {cfg.profile_path}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -142,9 +156,11 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("latency", help="median press-to-screen latency (start on the home screen)")
     p.add_argument("-n", "--samples", type=int, default=10)
     p.set_defaults(fn=cmd_latency)
-    sub.add_parser("register", help="link this host with the console (PSN sign-in + PIN)").set_defaults(
-        fn=cmd_register
-    )
+    p = sub.add_parser("setup", aliases=["register"], help="find the console and link this computer to it")
+    p.add_argument("--force", action="store_true", help="link even if already linked")
+    p.add_argument("--no-gui", action="store_true", help="use the browser + terminal instead of a window")
+    p.add_argument("--gui-only", action="store_true", help=argparse.SUPPRESS)  # used by the MCP setup tool
+    p.set_defaults(fn=cmd_setup)
     sub.add_parser("stop", help="stop the daemon (releases all input first)").set_defaults(fn=cmd_stop)
     args = parser.parse_args(argv)
     cfg = _config(args)
@@ -158,3 +174,13 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def entry() -> None:
+    """`ps5-remoteplay-mcp`: no arguments runs the MCP server (what agents launch); otherwise the CLI."""
+    if len(sys.argv) > 1:
+        main()
+    else:
+        from .mcp_server import main as mcp_main
+
+        mcp_main()

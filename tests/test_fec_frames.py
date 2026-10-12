@@ -1,5 +1,6 @@
 import io
 import random
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -29,11 +30,9 @@ def test_fec_gives_up_beyond_m():
     assert fec.decode_from_bytes(matrix, bytes(5 * 16), [0, 1], 16) == b""
 
 
-def test_fec_installs_as_pyjerasure():
-    fec.install()
-    import pyjerasure
-
-    assert pyjerasure.align_size(pyjerasure.Matrix("cauchy", 3, 2, 8), 17) == 32
+def test_vendored_library_uses_numpy_fec():
+    src = (Path(fec.__file__).parent / "vendor" / "pyremoteplay" / "av.py").read_text()
+    assert "from ... import fec as pyjerasure" in src
 
 
 def test_jpeg_is_valid_and_resized():

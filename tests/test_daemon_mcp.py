@@ -93,6 +93,7 @@ TOOLS = {
     "release_all",
     "wake",
     "standby",
+    "setup",
 }
 
 

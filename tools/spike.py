@@ -18,8 +18,8 @@ import time
 from pathlib import Path
 
 import numpy as np
-from pyremoteplay import RPDevice
-from pyremoteplay.receiver import QueueReceiver
+from ps5agent.vendor.pyremoteplay import RPDevice
+from ps5agent.vendor.pyremoteplay.receiver import QueueReceiver
 
 DIFF_SIZE = (160, 90)  # downscaled gray frame used for change detection
 PIXEL_DELTA = 25  # gray-level change that counts a pixel as changed

@@ -1,17 +1,14 @@
-"""Backend A: pyremoteplay (Remote Play protocol, based on Chiaki)."""
+"""Backend A: Remote Play via the vendored, patched pyremoteplay (protocol based on Chiaki)."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import shutil
 import threading
 import time
 from collections import deque
-from pathlib import Path
 
-from .. import fec
+from .. import console
 from ..config import Config
 from .base import Button, ConsoleError, ConsoleState, Frame, Side, Status
 
@@ -22,43 +19,8 @@ _STATUS_TTL_S = 3.0
 _BUTTON_NAMES = {b: ("SHARE" if b is Button.CREATE else b.value.upper()) for b in Button}
 
 
-def _patch_pyremoteplay() -> None:
-    """Idempotent fixes for pyremoteplay 0.7.6 against current PS5 firmware and libraries."""
-    # DEBUG logs of pyremoteplay print the handshake key and ECDH secret — never let them through.
-    logging.getLogger("pyremoteplay").setLevel(max(logging.INFO, logging.getLogger("pyremoteplay").level))
-    fec.install()  # lost-packet recovery; without it a single lost packet drops the frame (Wi-Fi)
-
-    from pyremoteplay.protobuf import ProtoHandler
-
-    if getattr(ProtoHandler.big_payload, "_ps5agent", False):
-        return
-    original = ProtoHandler.big_payload
-
-    def big_payload(*args, client_version: int = 7, **kwargs):
-        # The network test sends client_version=7; PS5 answers "version not accepted".
-        # chiaki-ng's senkusha sends 9 there.
-        return original(*args, client_version=9 if client_version == 7 else client_version, **kwargs)
-
-    big_payload._ps5agent = True
-    ProtoHandler.big_payload = staticmethod(big_payload)
-
-
-def _use_profile_dir(cfg: Config) -> None:
-    from pyremoteplay.profile import Profiles
-
-    cfg.config_dir.mkdir(parents=True, exist_ok=True)
-    legacy = Path.home() / ".pyremoteplay" / ".profile.json"
-    if not cfg.profile_path.exists() and legacy.exists():
-        shutil.copy2(legacy, cfg.profile_path)
-    if os.name == "posix":
-        os.chmod(cfg.config_dir, 0o700)
-        if cfg.profile_path.exists():
-            os.chmod(cfg.profile_path, 0o600)
-    Profiles.set_default_path(str(cfg.profile_path))
-
-
 def _make_receiver():
-    from pyremoteplay.receiver import QueueReceiver
+    from ..vendor.pyremoteplay.receiver import QueueReceiver
 
     class VideoOnlyReceiver(QueueReceiver):
         """Keeps the newest decoded video frames with ids and timestamps; drops audio."""
@@ -70,13 +32,13 @@ def _make_receiver():
             self.frame_ts = 0.0
             self.arrivals: deque[float] = deque(maxlen=120)
 
-        def _get_audio_codec(self, header: bytes) -> None:  # audio unused; its resampler breaks on av 13
+        def _get_audio_codec(self, header: bytes) -> None:  # audio unused; skip decoder + resampler
             return None
 
         def handle_audio_data(self, buf: bytes) -> None:
             return None
 
-        def handle_video(self, frame) -> None:  # called from pyremoteplay's decoder thread
+        def handle_video(self, frame) -> None:  # called from the library's decoder thread
             now = time.monotonic()
             with self.lock:
                 self.frame_id += 1
@@ -98,42 +60,63 @@ def _make_receiver():
 
 class RemotePlayBackend:
     def __init__(self, cfg: Config) -> None:
-        _patch_pyremoteplay()
-        _use_profile_dir(cfg)
-        from pyremoteplay import RPDevice
-
+        console.prepare(cfg)
         self.cfg = cfg
-        self.device = RPDevice(cfg.host)
+        self.device = None  # created once the console's address is known
         self.receiver = None
         self._status_at = 0.0
         self._console = ConsoleState.UNKNOWN
+        self._detail = ""
         self._rgb_cache: tuple[int, Frame] | None = None
         self._pressed: set[Button] = set()
 
     # --- helpers ---------------------------------------------------------
+    async def _ensure_device(self, rediscover: bool = False):
+        from ..vendor.pyremoteplay import RPDevice
+
+        if self.device is None or rediscover:
+            host = await console.resolve_host(self.cfg, rediscover=rediscover)
+            if self.device is None or self.device.host != host:
+                self.device = RPDevice(host)
+        return self.device
+
     def _user(self) -> str:
         users = self.device.get_users()
         if self.cfg.user:
             if self.cfg.user not in users:
-                raise ConsoleError(f"PSN user {self.cfg.user!r} is not registered with this console")
+                raise ConsoleError(f"PSN user {self.cfg.user!r} is not linked to this console; run setup")
             return self.cfg.user
         if not users:
-            raise ConsoleError("no PSN user registered with this console; run `ps5agent register`")
+            raise ConsoleError("this computer is not linked to the console yet; run setup")
         return users[0]
 
     async def _refresh_console(self, force: bool = False) -> ConsoleState:
-        if force or time.monotonic() - self._status_at > _STATUS_TTL_S:
-            status = await self.device.async_get_status()
-            self._status_at = time.monotonic()
-            if not status:
-                self._console = ConsoleState.UNREACHABLE
-            else:
-                self._console = ConsoleState.AWAKE if self.device.is_on else ConsoleState.STANDBY
+        if not force and time.monotonic() - self._status_at <= _STATUS_TTL_S:
+            return self._console
+        self._status_at = time.monotonic()
+        if not console.is_set_up(self.cfg):
+            self._console, self._detail = ConsoleState.NOT_SET_UP, "not set up yet: run the setup tool"
+            return self._console
+        try:
+            device = await self._ensure_device()
+            status = await device.async_get_status()
+            if not status and not self.cfg.host:
+                # the console may have a new address (DHCP): look for it again
+                device = await self._ensure_device(rediscover=True)
+                status = await device.async_get_status()
+        except ConsoleError as err:
+            self._console, self._detail = ConsoleState.UNREACHABLE, str(err)
+            return self._console
+        if not status:
+            self._console, self._detail = ConsoleState.UNREACHABLE, f"no answer from {self.device.host}"
+        else:
+            self._console = ConsoleState.AWAKE if self.device.is_on else ConsoleState.STANDBY
+            self._detail = ""
         return self._console
 
     @property
     def _session_up(self) -> bool:
-        session = self.device.session
+        session = self.device.session if self.device else None
         return bool(session and session.is_ready and not session.is_stopped)
 
     def _controller(self):
@@ -145,9 +128,9 @@ class RemotePlayBackend:
     async def connect(self) -> None:
         if self._session_up:
             return
-        console = await self._refresh_console(force=True)
-        if console is not ConsoleState.AWAKE:
-            raise ConsoleError(f"console is {console.value}")
+        state = await self._refresh_console(force=True)
+        if state is not ConsoleState.AWAKE:
+            raise ConsoleError(self._detail or f"console is {state.value}")
         self.device.disconnect()
         self.receiver = _make_receiver()
         session = self.device.create_session(
@@ -175,6 +158,8 @@ class RemotePlayBackend:
         self._pressed = set()
 
     async def disconnect(self) -> None:
+        if self.device is None:
+            return
         try:
             if self._session_up:
                 await self.release_all()
@@ -184,17 +169,18 @@ class RemotePlayBackend:
 
     async def status(self) -> Status:
         try:
-            console = await self._refresh_console()
+            state = await self._refresh_console()
         except OSError as err:
             return Status(ConsoleState.UNREACHABLE, False, detail=str(err))
         up = self._session_up
         return Status(
-            console=console,
+            console=state,
             session_up=up,
             fps=self.receiver.fps() if up and self.receiver else 0.0,
             last_frame_ts=self.receiver.frame_ts if up and self.receiver and self.receiver.frame_id else None,
-            firmware=self.device.system_version,
-            app=self.device.app_name,
+            firmware=self.device.system_version if self.device else None,
+            app=self.device.app_name if self.device else None,
+            detail=self._detail,
         )
 
     def latest_frame(self) -> Frame | None:
@@ -221,7 +207,7 @@ class RemotePlayBackend:
         self._controller().stick(side.value, point=(float(x), float(y)))
 
     async def set_trigger(self, side: Side, value: float) -> None:
-        from pyremoteplay.stream_packets import FeedbackEvent
+        from ..vendor.pyremoteplay.stream_packets import FeedbackEvent
 
         controller = self._controller()
         level = round(max(0.0, min(1.0, value)) * 255)
@@ -248,14 +234,16 @@ class RemotePlayBackend:
             await self.set_trigger(side, 0.0)
 
     async def wake(self) -> None:
-        console = await self._refresh_console(force=True)
-        if console is ConsoleState.AWAKE:
+        state = await self._refresh_console(force=True)
+        if state is ConsoleState.AWAKE:
             return
-        if console is ConsoleState.UNREACHABLE:
-            raise ConsoleError("console unreachable (is rest-mode networking enabled?)")
+        if state is not ConsoleState.STANDBY:
+            raise ConsoleError(self._detail or f"console is {state.value}")
         self.device.wakeup(user=self._user())
         if not await self.device.async_wait_for_wakeup(timeout=60):
-            raise ConsoleError("console did not wake within 60 s")
+            raise ConsoleError(
+                "console did not wake within 60 s (is 'Enable Turning On PS5 from Network' on?)"
+            )
         self._status_at = 0.0
 
     async def standby(self) -> None:
@@ -263,6 +251,9 @@ class RemotePlayBackend:
             await self.release_all()
             ok = await self.device.session.async_standby()
         else:
+            state = await self._refresh_console(force=True)
+            if state is not ConsoleState.AWAKE:
+                raise ConsoleError(self._detail or f"console is {state.value}")
             ok = await self.device.standby(self._user())
         self.device.controller.stop()
         self.device.disconnect()

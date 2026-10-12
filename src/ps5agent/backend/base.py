@@ -39,6 +39,7 @@ class ConsoleState(StrEnum):
     AWAKE = "awake"
     STANDBY = "standby"
     UNREACHABLE = "unreachable"
+    NOT_SET_UP = "not_set_up"
     UNKNOWN = "unknown"
 
 
