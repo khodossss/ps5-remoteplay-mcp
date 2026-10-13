@@ -5,3 +5,5 @@ snapshot.jpg
 .pytest_cache/
 .ruff_cache/
 dist/
+.uv-cache/
+.test-run/

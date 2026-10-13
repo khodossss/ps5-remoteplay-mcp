@@ -79,6 +79,8 @@ class InputEngine:
         self.backend = backend
         self.max_hold_ms = max_hold_ms
         self._lock = asyncio.Lock()
+        self._preempted = asyncio.Event()
+        self._generation = 0
         self._pressed: set[Button] = set()
         self._active_since: float | None = None
         self._watchdog: asyncio.Task | None = None
@@ -95,6 +97,7 @@ class InputEngine:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._watchdog
             self._watchdog = None
+        await self.preempt()
         await self.release_all()
 
     async def _watch(self) -> None:
@@ -116,9 +119,16 @@ class InputEngine:
             _LOG.exception("release_all failed")
 
     @contextlib.asynccontextmanager
-    async def _active(self) -> AsyncIterator[None]:
+    async def _active(self, guard: Callable[[], None] | None = None) -> AsyncIterator[None]:
         """Serialize input; on any exit path that is not clean, release everything."""
+        generation = self._generation
         async with self._lock:
+            # Refused queued input never owned the controller, so must not release human input.
+            if generation != self._generation:
+                raise ConsoleError("preempted: the user took over with the gamepad")
+            if guard is not None:
+                guard()
+            self._preempted.clear()
             clean = False
             try:
                 yield
@@ -143,7 +153,7 @@ class InputEngine:
 
     async def _do(self, step: Step) -> None:
         if step.op == "wait":
-            await asyncio.sleep(step.duration_ms / 1000)
+            await self._pause(step.duration_ms)
             return
         async with self._held():
             await self._hold(step)
@@ -154,7 +164,7 @@ class InputEngine:
             self._pressed = self._pressed | {step.button}
             await self.backend.set_buttons(self._pressed)
             try:
-                await asyncio.sleep(step.duration_ms / 1000)
+                await self._pause(step.duration_ms)
             finally:
                 self._pressed = self._pressed - {step.button}
                 await self.backend.set_buttons(self._pressed)
@@ -162,14 +172,14 @@ class InputEngine:
             self._check_duration(step.duration_ms)
             await self.backend.set_stick(step.side, step.x, step.y)
             try:
-                await asyncio.sleep(step.duration_ms / 1000)
+                await self._pause(step.duration_ms)
             finally:
                 await self.backend.set_stick(step.side, 0.0, 0.0)
         elif step.op == "trigger":
             self._check_duration(step.duration_ms)
             await self.backend.set_trigger(step.side, step.value)
             try:
-                await asyncio.sleep(step.duration_ms / 1000)
+                await self._pause(step.duration_ms)
             finally:
                 await self.backend.set_trigger(step.side, 0.0)
 
@@ -199,7 +209,7 @@ class InputEngine:
         for step in steps:
             if step.op != "wait":
                 self._check_duration(step.duration_ms)
-        async with self._active():
+        async with self._active(guard):
             for done, step in enumerate(steps):
                 try:
                     if guard is not None:
@@ -207,6 +217,28 @@ class InputEngine:
                     await self._do(step)
                 except Exception as err:
                     raise InputAbortedError(done, len(steps), err) from err
+
+    async def _pause(self, ms: int) -> None:
+        """Sleep for a step, but end at once if the input is preempted."""
+        try:
+            await asyncio.wait_for(self._preempted.wait(), ms / 1000)
+        except TimeoutError:
+            return
+        raise ConsoleError("preempted: the user took over with the gamepad")
+
+    async def preempt(self) -> None:
+        """Stop the running input now (its cleanup releases everything) and wait until it is gone."""
+        self._generation += 1
+        self._preempted.set()
+        if self._lock.locked():
+            async with self._lock:
+                pass
+
+    @contextlib.asynccontextmanager
+    async def manual(self) -> AsyncIterator[None]:
+        """Human input uses the same lock after preempting the agent's cleanup."""
+        async with self._lock:
+            yield
 
     async def release_all(self) -> None:
         # Not behind the lock on purpose: must work while a hold is in progress.

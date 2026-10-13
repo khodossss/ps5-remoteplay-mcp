@@ -17,6 +17,8 @@ dependencies = [
     "psutil>=5.9",
     "pycryptodomex>=3.19",
     "pyee>=9",
+    "pysdl2>=0.9.17",
+    "pysdl2-dll>=2.32.10",
     "pywebview>=5",
     "requests>=2.31",
 ]

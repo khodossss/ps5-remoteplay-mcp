@@ -128,8 +128,20 @@ Credentials live in `~/.config/ps5-agent/profiles.json` and never appear in logs
 
 ## Safety and reliability
 
+A DualSense connected to the computer by USB or Bluetooth can share the daemon's Remote Play
+session with the agent. The human takes priority: touching the gamepad interrupts the agent's input
+and drops its queued commands. Agent input is refused until the gamepad is neutral for two seconds.
+`status` reports `gamepad` and `human_input`. Keep watching the TV; the daemon has no video window.
+Unplugging the controller or losing its reader releases all input. After a session loss, release the
+gamepad before pressing again. USB and Bluetooth forwarding still require verification on a real
+DualSense and PS5.
+
+A controller connected directly to the PS5 is outside this arbitration. Call `disconnect` to close
+Remote Play and hand the console back before playing with that controller.
+
 - **No stuck input.** Everything is released on error, when the client disconnects, when the daemon stops, and when the session drops. A watchdog releases anything held past the cap. If the daemon is killed hard mid-hold, the console releases the input together with the session (verified on hardware).
 - **One input queue.** Two agents cannot press at the same time.
+- Computer-gamepad activity keeps the daemon alive while the human plays.
 - **Reconnects** with exponential backoff; `status` reports `reconnecting` honestly. If the console gets a new IP address, it is found again by its MAC address.
 - **Stale and black frames are flagged.** A frame older than 2 s, or a black frame (content blocked from Remote Play), comes with a text warning.
 - **Wi-Fi:** lost video packets are recovered with forward error correction (Cauchy Reed-Solomon). The network test measures the real MTU/RTT.
