@@ -28,8 +28,11 @@ You control a real PlayStation 5 through Remote Play: you see its screen and pre
   may trigger the next action.
 - If `status` says `stalled` or `reconnecting`, call `wait_ready` instead of sleeping. A failed input
   reports how many steps ran; the rest was dropped, never sent later - check the screen, then continue.
-- When you are done with the console, call `disconnect` so the user can play. It also disconnects by
-  itself after 10 minutes without calls.
+- A gamepad connected to the computer takes priority: human_input in status means agent input is
+  refused. Wait for the user to finish; interrupted steps are dropped and must not be retried blindly.
+- To hand the console back to a controller attached directly to the PS5, call `disconnect`.
+  If the user plays with a computer gamepad, leave the daemon running: disconnect would stop their
+  input too. It disconnects by itself after 10 minutes without calls or computer-gamepad activity.
 - To leave a system screen or go back, press `circle`. `ps` opens the control center; `options` opens
   context menus. Confirm is `cross`.
 - Never confirm a purchase in PlayStation Store, and never delete games, saves or users, unless the user

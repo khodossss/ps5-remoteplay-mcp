@@ -16,6 +16,8 @@ from . import frames
 from .backend import Button, ConsoleBackend, ConsoleError, ConsoleState, Frame, Side, make_backend
 from .config import Config
 from .engine import InputEngine, Step
+from .pad_bridge import PadBridge
+from .pad_reader import PadReader
 
 _LOG = logging.getLogger(__name__)
 STALE_FRAME_S = 2.0
@@ -33,6 +35,8 @@ class Daemon:
         self.cfg = cfg
         self.backend = backend or make_backend(cfg)
         self.engine = InputEngine(self.backend, cfg.max_hold_ms)
+        self.pad = PadBridge(self)
+        self.pad_reader: PadReader | None = None
         # starting | connecting | up | stalled | reconnecting | standby | unreachable | not_set_up
         self.state = "starting"
         self.last_error = ""
@@ -48,10 +52,20 @@ class Daemon:
     # --- session supervision ---------------------------------------------
     async def start(self) -> None:
         self.engine.start()
+        self.pad.start()
+        if self.cfg.backend != "fake":
+            loop = asyncio.get_running_loop()
+            self.pad_reader = PadReader(
+                lambda state: loop.call_soon_threadsafe(self.pad.submit, state, time.monotonic())
+            )
+            self.pad_reader.start()
         self._supervisor = asyncio.create_task(self._supervise())
 
     async def stop(self) -> None:
         self._stopping = True
+        if self.pad_reader:
+            await asyncio.to_thread(self.pad_reader.stop)
+        await self.pad.stop()
         if self._supervisor:
             self._supervisor.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -76,12 +90,16 @@ class Daemon:
                 status = await self.backend.status()
             except Exception as err:
                 self.state, self.last_error = "unreachable", str(err)
+                if self.pad.active:
+                    await self.pad.reset()
                 await self._sleep(5)
                 continue
             if status.session_up:
                 frame_age = None if status.last_frame_ts is None else time.monotonic() - status.last_frame_ts
                 stale = frame_age is None or frame_age > STALE_FRAME_S
                 self.state, self._was_up, backoff = ("stalled" if stale else "up"), True, 1.0
+                if stale and self.pad.active:
+                    await self.pad.reset()
                 if frame_age is not None and frame_age > STALL_RECONNECT_S:
                     self.last_error = f"no video for {frame_age:.0f} s; reconnecting"
                     _LOG.warning("%s", self.last_error)
@@ -92,7 +110,7 @@ class Daemon:
             if self._was_up:
                 # session dropped under us: make sure nothing is left pressed, and end the epoch so
                 # an input still running cannot continue into the next session
-                await self.engine.release_all()
+                await self.pad.reset()
                 self._was_up = False
                 self.session_epoch += 1
             if status.console is ConsoleState.STANDBY:
@@ -130,6 +148,8 @@ class Daemon:
             "last_error": self.last_error or status.detail,
             "watchdog_trips": self.engine.watchdog_trips,
             "backend": self.cfg.backend,
+            "gamepad": self.pad_reader.name if self.pad_reader else None,
+            "human_input": self.pad.active,
         }
 
     async def wait_ready(self, timeout_s: float = 20.0) -> bool:
@@ -144,12 +164,18 @@ class Daemon:
 
     async def require_ready(self) -> None:
         """Input is sent only into a live stream: never queued for a session that comes back later."""
+        self.pad.require_agent()
         if not await self.wait_ready(self.ready_timeout_s):
             raise ConsoleError(
                 f"input not sent: the stream is not live (state: {self.state}"
                 + (f"; {self.last_error}" if self.last_error else "")
                 + "). Check `status` or call `wait_ready`."
             )
+
+    def check_input(self, epoch: int) -> None:
+        if self.session_epoch != epoch:
+            raise ConsoleError("the Remote Play session was lost during this input")
+        self.pad.require_agent()
 
     async def snapshot(
         self,
@@ -223,7 +249,8 @@ class Daemon:
 
     async def latency(self, samples: int = 10) -> dict:
         """Median press -> visible change, alternating right/left (home screen is a good bench)."""
-        await self.wait_ready()
+        await self.require_ready()
+        epoch = self.session_epoch
         results = []
         for i in range(samples):
             before = self.backend.latest_frame()
@@ -231,7 +258,10 @@ class Daemon:
                 raise ConsoleError("no frames")
             base = await asyncio.to_thread(frames.small_gray, before.rgb)
             t0 = time.monotonic()
-            await self.engine.press(Button.RIGHT if i % 2 == 0 else Button.LEFT, 80)
+            await self.engine.run(
+                [Step("press", button=Button.RIGHT if i % 2 == 0 else Button.LEFT, duration_ms=80)],
+                lambda: self.check_input(epoch),
+            )
             seen = before.frame_id
             while time.monotonic() - t0 < 3.0:
                 cur = self.backend.latest_frame()
@@ -278,7 +308,7 @@ def build_app(daemon: Daemon) -> web.Application:
         body = await request.json()
         op = body.get("op")
         if op == "release_all":
-            await daemon.engine.release_all()
+            await daemon.pad.reset()
             return web.json_response({"ok": True})
         if op == "sequence":
             steps = [Step.parse(s) for s in body.get("steps", [])]
@@ -291,8 +321,7 @@ def build_app(daemon: Daemon) -> web.Application:
         epoch = daemon.session_epoch
 
         def same_session() -> None:
-            if daemon.session_epoch != epoch:
-                raise ConsoleError("the Remote Play session was lost during this input")
+            daemon.check_input(epoch)
 
         await daemon.engine.run(steps, same_session)
         result: dict = {"ok": True}
@@ -314,6 +343,7 @@ def build_app(daemon: Daemon) -> web.Application:
 
     @routes.post("/standby")
     async def standby(request: web.Request) -> web.Response:
+        daemon.pad.require_agent()
         await daemon.engine.release_all()
         await daemon.backend.standby()
         daemon.kick()
@@ -368,11 +398,11 @@ async def exit_when_idle(daemon: Daemon, stop: asyncio.Event) -> None:
         return
     while True:
         idle_s = time.monotonic() - daemon.last_call
-        if idle_s >= limit:
+        if idle_s >= limit and not daemon.pad.active:
             _LOG.info("no calls for %d s: closing the session and exiting", round(idle_s))
             stop.set()
             return
-        await asyncio.sleep(min(limit - idle_s, 30) + 0.1)
+        await asyncio.sleep(max(0.1, min(limit - idle_s, 30)) + 0.1)
 
 
 async def serve(cfg: Config, backend: ConsoleBackend | None = None) -> None:

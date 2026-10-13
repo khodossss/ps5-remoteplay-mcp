@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,13 @@ def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+async def wait_until(predicate: Callable[[], bool], timeout_s: float = 3.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while not predicate():
+        assert time.monotonic() < deadline, "condition not reached"
+        await asyncio.sleep(0.005)
 
 
 @pytest.fixture
