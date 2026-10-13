@@ -132,6 +132,7 @@ A DualSense connected to the computer by USB or Bluetooth can share the daemon's
 session with the agent. The human takes priority: touching the gamepad interrupts the agent's input
 and drops its queued commands. Agent input is refused until the gamepad is neutral for two seconds.
 `status` reports `gamepad` and `human_input`. Keep watching the TV; the daemon has no video window.
+Leave the daemon running while playing with the computer gamepad; `disconnect` stops its input too.
 Unplugging the controller or losing its reader releases all input. After a session loss, release the
 gamepad before pressing again. USB and Bluetooth forwarding still require verification on a real
 DualSense and PS5.
