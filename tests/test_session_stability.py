@@ -16,6 +16,7 @@ from ps5agent.mcp_server import build_server
 from ps5agent.vendor.pyremoteplay.stream import RPStream
 
 from .conftest import free_port
+from .conftest import wait_until as _until
 
 
 @pytest.fixture
@@ -64,13 +65,6 @@ def test_menu_buttons_get_a_longer_default_press():
 
 
 # --- daemon --------------------------------------------------------------
-async def _until(predicate, timeout_s: float = 3.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    while not predicate():
-        assert time.monotonic() < deadline, "condition not reached"
-        await asyncio.sleep(0.02)
-
-
 async def test_stalled_stream_is_reported_and_input_refused(daemon, client, fake):
     daemon.ready_timeout_s = 0.3
     fake.stall_s = 5.0  # past STALE_FRAME_S, short of STALL_RECONNECT_S
@@ -100,7 +94,7 @@ async def test_input_does_not_continue_into_a_new_session(daemon, client, fake):
         {"op": "press", "button": "right", "duration_ms": 10},
     ]
     task = asyncio.create_task(client.input("sequence", steps=steps))
-    await _until(lambda: fake.index == 1)
+    await _until(lambda: fake.index == 1 and fake.idle)
     fake.connected = False  # stream dies; the supervisor notices and reconnects during the wait
     await _until(lambda: daemon.session_epoch == 1 and fake.connected)
     with pytest.raises(DaemonError, match=r"after 2 of 3 steps \(the Remote Play session was lost"):
