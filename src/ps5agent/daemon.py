@@ -8,6 +8,7 @@ import contextlib
 import logging
 import os
 import signal
+import subprocess
 import time
 
 from aiohttp import web
@@ -18,6 +19,7 @@ from .config import Config
 from .engine import InputEngine, Step
 from .pad_bridge import PadBridge
 from .pad_reader import PadReader
+from .viewer import spawn_viewer
 
 _LOG = logging.getLogger(__name__)
 STALE_FRAME_S = 2.0
@@ -49,6 +51,8 @@ class Daemon:
         self._stopping = False
         self._was_up = False
         self.session_epoch = 0  # bumped on every session loss
+        self.spawn_viewer = spawn_viewer  # tests replace it: no real window
+        self._viewer: subprocess.Popen | None = None
 
     # --- session supervision ---------------------------------------------
     async def start(self) -> None:
@@ -62,8 +66,21 @@ class Daemon:
             self.pad_reader.start()
         self._supervisor = asyncio.create_task(self._supervise())
 
+    @property
+    def viewer_open(self) -> bool:
+        return self._viewer is not None and self._viewer.poll() is None  # the user may close it
+
+    def set_viewer(self, show: bool) -> None:
+        """Open or close the picture window on the user's computer (graph `ps5-agent-bridge`, node #29)."""
+        if show and not self.viewer_open:
+            self._viewer = self.spawn_viewer()
+        elif not show and self.viewer_open:
+            self._viewer.terminate()
+            self._viewer = None
+
     async def stop(self) -> None:
         self._stopping = True
+        self.set_viewer(False)
         if self.pad_reader:
             await asyncio.to_thread(self.pad_reader.stop)
         await self.pad.stop()
@@ -151,6 +168,7 @@ class Daemon:
             "backend": self.cfg.backend,
             "gamepad": self.pad_reader.name if self.pad_reader else None,
             "human_input": self.pad.active,
+            "viewer": self.viewer_open,
         }
 
     async def wait_ready(self, timeout_s: float = 20.0) -> bool:
@@ -349,6 +367,11 @@ def build_app(daemon: Daemon) -> web.Application:
             )
         return web.json_response(result)
 
+    @routes.post("/viewer")
+    async def viewer(request: web.Request) -> web.Response:
+        daemon.set_viewer(bool((await request.json())["show"]))
+        return web.json_response({"ok": True, "viewer": daemon.viewer_open})
+
     @routes.post("/wake")
     async def wake(request: web.Request) -> web.Response:
         await daemon.backend.wake()
@@ -432,10 +455,7 @@ async def serve(cfg: Config, backend: ConsoleBackend | None = None) -> None:
     await site.start()
     await daemon.start()
     _LOG.info("daemon listening on %s (backend %s)", cfg.daemon_url, cfg.backend)
-    if cfg.viewer:
-        from .viewer import spawn_viewer
-
-        spawn_viewer()
+    daemon.set_viewer(cfg.viewer)
 
     loop = asyncio.get_running_loop()
     stop = app[SHUTDOWN]

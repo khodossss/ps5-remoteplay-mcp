@@ -87,6 +87,7 @@ The agent looks at a screenshot, presses buttons and looks again. It typically p
 | `release_all` | — | Release every button, center the sticks, release the triggers |
 | `wake` | — | Wake the console from rest mode |
 | `standby` | `confirm="yes"` | Put the console into rest mode |
+| `viewer` | `show` | Open or close a window with the live picture on the user's computer. Closed by default; the agent opens it when you ask to see the screen |
 
 Buttons: `cross circle square triangle up down left right l1 r1 l2 r2 l3 r3 options create touchpad ps`.
 
@@ -124,7 +125,7 @@ All optional. Environment variables; CLI flags of the same name override them.
 | `PS5_DAEMON_ADDR` | `127.0.0.1:9395` | Daemon API address (loopback only) |
 | `PS5_MAX_HOLD_MS` | `10000` | Upper bound for any hold |
 | `PS5_BACKEND` | `pyremoteplay` | `fake` runs without a console (for development) |
-| `PS5_VIEWER` | off | `1`: the daemon opens a window with the console picture for you to watch. Closing it does not stop the session; `ps5agent view` reopens it |
+| `PS5_VIEWER` | off | `1`: open the picture window whenever the daemon starts (otherwise the agent opens it on request, or run `ps5agent view`). Closing it does not stop the session |
 
 Credentials live in `~/.config/ps5-agent/profiles.json` and never appear in logs or tool responses. The daemon log is `~/.config/ps5-agent/daemon.log`.
 
