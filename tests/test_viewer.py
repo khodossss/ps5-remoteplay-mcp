@@ -1,0 +1,41 @@
+"""Viewer window feed: /frame serves the newest frame to the human's window without keeping the
+daemon alive."""
+
+import io
+
+import httpx
+from PIL import Image
+
+from ps5agent.config import from_env
+
+
+async def test_frame_serves_new_frames_only(cfg, daemon, fake):
+    async with httpx.AsyncClient(base_url=cfg.daemon_url) as http:
+        response = await http.get("/frame")
+        assert response.status_code == 200 and response.headers["content-type"] == "image/jpeg"
+        frame_id = int(response.headers["x-frame-id"])
+        assert frame_id == fake.frame_id
+        assert Image.open(io.BytesIO(response.content)).format == "JPEG"
+        assert (await http.get("/frame", params={"after": frame_id})).status_code == 204
+        # a reconnect restarts frame ids: a lower id is a new frame too
+        assert (await http.get("/frame", params={"after": frame_id + 100})).status_code == 200
+
+
+async def test_frame_does_not_keep_daemon_alive(cfg, daemon):
+    daemon.last_call = 0.0
+    async with httpx.AsyncClient(base_url=cfg.daemon_url) as http:
+        assert (await http.get("/frame")).status_code == 200
+    assert daemon.last_call == 0.0
+
+
+async def test_frame_without_video(cfg, daemon, fake):
+    fake.awake = False
+    await fake.disconnect()
+    async with httpx.AsyncClient(base_url=cfg.daemon_url) as http:
+        assert (await http.get("/frame")).status_code == 204
+
+
+def test_viewer_option_from_env():
+    assert from_env({}).viewer is False
+    assert from_env({"PS5_VIEWER": "1"}).viewer is True
+    assert from_env({"PS5_VIEWER": "0"}).viewer is False

@@ -1,4 +1,4 @@
-"""`ps5agent` CLI: setup | daemon | status | snapshot | press | latency | stop."""
+"""`ps5agent` CLI: setup | daemon | view | status | snapshot | press | latency | stop."""
 
 from __future__ import annotations
 
@@ -42,7 +42,17 @@ def cmd_daemon(cfg: Config, args: argparse.Namespace) -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
-    run(cfg.validate())
+    run(cfg.with_overrides(viewer=args.view or None).validate())
+
+
+def cmd_view(cfg: Config, args: argparse.Namespace) -> None:
+    import os
+
+    from . import viewer
+
+    os.environ["PS5_VIEWER"] = "0"  # a daemon started from here must not open a second window
+    _run(lambda c: c.ensure(), cfg)
+    viewer.run(cfg)
 
 
 def cmd_status(cfg: Config, args: argparse.Namespace) -> None:
@@ -141,7 +151,10 @@ def main(argv: list[str] | None = None) -> None:
         help="video bitrate (PS5_QUALITY); lower it on weak Wi-Fi",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("daemon", help="run the daemon in the foreground").set_defaults(fn=cmd_daemon)
+    p = sub.add_parser("daemon", help="run the daemon in the foreground")
+    p.add_argument("--view", action="store_true", help="open a window with the console picture (PS5_VIEWER)")
+    p.set_defaults(fn=cmd_daemon)
+    sub.add_parser("view", help="show the console picture in a window").set_defaults(fn=cmd_view)
     sub.add_parser("status", help="console and session state").set_defaults(fn=cmd_status)
     p = sub.add_parser("snapshot", help="save the current screen as JPEG")
     p.add_argument("-o", "--output", default="snapshot.jpg")

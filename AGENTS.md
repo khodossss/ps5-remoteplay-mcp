@@ -124,6 +124,7 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 | Hardware test (needs the console) | `PS5_HOST=<IP> uv run pytest -m hardware` |
 | Daemon in the foreground | `PS5_HOST=<IP> uv run ps5agent daemon` |
 | Status / snapshot / press / latency | `uv run ps5agent status \| snapshot -o f.jpg \| press cross \| latency` |
+| Picture window for the human (or `PS5_VIEWER=1` at daemon start) | `uv run ps5agent view` |
 | Stop the daemon | `uv run ps5agent stop` |
 | Link to the console (sign-in window + PIN) | `uv run ps5agent setup` (`--no-gui` for terminal) |
 | MCP server (agents launch it; no args = MCP, args = CLI) | `uv run ps5-remoteplay-mcp` |
@@ -138,6 +139,7 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 - `src/ps5agent/login_window.py` — pywebview window: Sony sign-in, catches the redirect, PIN form.
 - `src/ps5agent/engine.py` — input: serialization, watchdog, release guarantees.
 - `src/ps5agent/daemon.py` — session, reconnect, loopback HTTP API.
+- `src/ps5agent/viewer.py` — picture window for the human (separate process reading `/frame`).
 - `src/ps5agent/client.py` — daemon client + autostart; `mcp_server.py` — tools; `cli.py` — `ps5agent`.
 - `src/ps5agent/fec.py` — `pyjerasure` replacement (Cauchy Reed-Solomon, GF(2^8)).
 - `tests/` — unit + MCP contract tests on fake; `test_hardware.py` — only with `PS5_HOST`.

@@ -106,7 +106,8 @@ status                   # console + session state
 snapshot -o screen.jpg   # save the current screen
 press cross              # tap a button
 latency                  # press-to-screen latency
-daemon                   # run the daemon in the foreground with logs
+view                     # watch the console picture in a window
+daemon                   # run the daemon in the foreground with logs (--view opens the window)
 stop                     # stop the daemon (releases all input first)
 ```
 
@@ -123,6 +124,7 @@ All optional. Environment variables; CLI flags of the same name override them.
 | `PS5_DAEMON_ADDR` | `127.0.0.1:9395` | Daemon API address (loopback only) |
 | `PS5_MAX_HOLD_MS` | `10000` | Upper bound for any hold |
 | `PS5_BACKEND` | `pyremoteplay` | `fake` runs without a console (for development) |
+| `PS5_VIEWER` | off | `1`: the daemon opens a window with the console picture for you to watch. Closing it does not stop the session; `ps5agent view` reopens it |
 
 Credentials live in `~/.config/ps5-agent/profiles.json` and never appear in logs or tool responses. The daemon log is `~/.config/ps5-agent/daemon.log`.
 
@@ -131,7 +133,8 @@ Credentials live in `~/.config/ps5-agent/profiles.json` and never appear in logs
 A DualSense connected to the computer by USB or Bluetooth can share the daemon's Remote Play
 session with the agent. The human takes priority: touching the gamepad interrupts the agent's input
 and drops its queued commands. Agent input is refused until the gamepad is neutral for two seconds.
-`status` reports `gamepad` and `human_input`. Keep watching the TV; the daemon has no video window.
+`status` reports `gamepad` and `human_input`. Watch the TV, or the computer window (`PS5_VIEWER=1` or
+`ps5agent view`).
 Leave the daemon running while playing with the computer gamepad; `disconnect` stops its input too.
 Unplugging the controller or losing its reader releases all input. After a session loss, release the
 gamepad before pressing again. USB and Bluetooth forwarding still require verification on a real
