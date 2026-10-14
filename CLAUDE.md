@@ -171,7 +171,8 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 - The project graph — every push (see "Session lifecycle").
 
 ## Git workflow
-- **Conventional commits** (`feat:`/`fix:`/`chore:`/`refactor:`/`docs:`/`test:`). Branches `feat/…`, `fix/…`, `chore/…`. PR titles in the same format.
+- **Conventional commits** (`feat:`/`fix:`/`chore:`/`refactor:`/`docs:`/`test:`). Branches `feat/…`, `fix/…`, `chore/…`.
+- **Merge without a PR — always** (owner's standing instruction): when the owner says to ship, merge the branch into `main` locally (`git merge --no-ff`) and push `main`; do not open a PR. The cold stage review and the post-merge graph steps still apply.
 - **No AI attribution**: no `Co-Authored-By` trailers for Claude or other agents in commits, no "Generated with" lines in PR bodies — the repository lists the owner as its only contributor (owner's decision).
 - **Forge**: GitHub, `khodossss/ps5-remoteplay-mcp` (public); CLI `gh` — observe with `gh pr list`, `gh pr checks <n>`.
 - **Local gate — one call**: `uv run python tools/gate.py`; call it by name, never assemble the steps by hand. No CI yet.
