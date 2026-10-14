@@ -8,6 +8,7 @@ import contextlib
 import logging
 import os
 import signal
+import subprocess
 import time
 
 from aiohttp import web
@@ -18,6 +19,7 @@ from .config import Config
 from .engine import InputEngine, Step
 from .pad_bridge import PadBridge
 from .pad_reader import PadReader
+from .viewer import spawn_viewer
 
 _LOG = logging.getLogger(__name__)
 STALE_FRAME_S = 2.0
@@ -28,6 +30,7 @@ WAITING_STATES = ("starting", "connecting", "reconnecting", "stalled")
 CHANGE_FRACTION = 0.002  # share of downscaled pixels that must differ to count as a screen change
 CHANGE_SETTLE_S = 0.4  # after the first change, let the transition finish before the snapshot
 FRESH_FRAME_WAIT_S = 2.0
+FRAME_PATH = "/frame"
 
 
 class Daemon:
@@ -48,6 +51,8 @@ class Daemon:
         self._stopping = False
         self._was_up = False
         self.session_epoch = 0  # bumped on every session loss
+        self.spawn_viewer = spawn_viewer  # tests replace it: no real window
+        self._viewer: subprocess.Popen | None = None
 
     # --- session supervision ---------------------------------------------
     async def start(self) -> None:
@@ -61,8 +66,21 @@ class Daemon:
             self.pad_reader.start()
         self._supervisor = asyncio.create_task(self._supervise())
 
+    @property
+    def viewer_open(self) -> bool:
+        return self._viewer is not None and self._viewer.poll() is None  # the user may close it
+
+    def set_viewer(self, show: bool) -> None:
+        """Open or close the picture window on the user's computer (graph `ps5-agent-bridge`, node #29)."""
+        if show and not self.viewer_open:
+            self._viewer = self.spawn_viewer()
+        elif not show and self.viewer_open:
+            self._viewer.terminate()
+            self._viewer = None
+
     async def stop(self) -> None:
         self._stopping = True
+        self.set_viewer(False)
         if self.pad_reader:
             await asyncio.to_thread(self.pad_reader.stop)
         await self.pad.stop()
@@ -150,6 +168,7 @@ class Daemon:
             "backend": self.cfg.backend,
             "gamepad": self.pad_reader.name if self.pad_reader else None,
             "human_input": self.pad.active,
+            "viewer": self.viewer_open,
         }
 
     async def wait_ready(self, timeout_s: float = 20.0) -> bool:
@@ -303,6 +322,19 @@ def build_app(daemon: Daemon) -> web.Application:
             await daemon.snapshot(int(q.get("max_width", 1024)), int(q.get("quality", 80)))
         )
 
+    @routes.get(FRAME_PATH)
+    async def frame(request: web.Request) -> web.Response:
+        """The newest frame as JPEG for the viewer window; 204 while it is still frame `after`.
+        Ids restart with every session, so "different", not "greater"."""
+        q = request.query
+        cur = daemon.backend.latest_frame()
+        if cur is None or cur.frame_id == int(q.get("after", 0)):
+            return web.Response(status=204)
+        jpeg, _, _ = await asyncio.to_thread(
+            frames.to_jpeg, cur.rgb, int(q.get("max_width", 1920)), int(q.get("quality", 85))
+        )
+        return web.Response(body=jpeg, content_type="image/jpeg", headers={"X-Frame-Id": str(cur.frame_id)})
+
     @routes.post("/input")
     async def input_(request: web.Request) -> web.Response:
         body = await request.json()
@@ -335,6 +367,11 @@ def build_app(daemon: Daemon) -> web.Application:
             )
         return web.json_response(result)
 
+    @routes.post("/viewer")
+    async def viewer(request: web.Request) -> web.Response:
+        daemon.set_viewer(bool((await request.json())["show"]))
+        return web.json_response({"ok": True, "viewer": daemon.viewer_open})
+
     @routes.post("/wake")
     async def wake(request: web.Request) -> web.Response:
         await daemon.backend.wake()
@@ -361,7 +398,10 @@ def build_app(daemon: Daemon) -> web.Application:
 
     @web.middleware
     async def errors(request: web.Request, handler) -> web.StreamResponse:
-        daemon.last_call = time.monotonic()
+        # only agent calls keep the session alive: an open viewer window must not hold it forever
+        touch = request.path != FRAME_PATH
+        if touch:
+            daemon.last_call = time.monotonic()
         try:
             return await handler(request)
         except (ValueError, KeyError) as err:
@@ -376,7 +416,8 @@ def build_app(daemon: Daemon) -> web.Application:
                 {"ok": False, "error": f"daemon error: {type(err).__name__}: {err}"}, status=500
             )
         finally:
-            daemon.last_call = time.monotonic()
+            if touch:
+                daemon.last_call = time.monotonic()
 
     app = web.Application(middlewares=[errors])
     app.add_routes(routes)
@@ -414,6 +455,7 @@ async def serve(cfg: Config, backend: ConsoleBackend | None = None) -> None:
     await site.start()
     await daemon.start()
     _LOG.info("daemon listening on %s (backend %s)", cfg.daemon_url, cfg.backend)
+    daemon.set_viewer(cfg.viewer)
 
     loop = asyncio.get_running_loop()
     stop = app[SHUTDOWN]

@@ -96,6 +96,7 @@ TOOLS = {
     "wake",
     "standby",
     "setup",
+    "viewer",
 }
 
 

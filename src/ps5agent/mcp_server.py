@@ -38,6 +38,8 @@ You control a real PlayStation 5 through Remote Play: you see its screen and pre
 - Never confirm a purchase in PlayStation Store, and never delete games, saves or users, unless the user
   explicitly asked for exactly that.
 - If a frame is reported black, the content is likely blocked from Remote Play; say so instead of guessing.
+- The user watches the TV by default. Open the `viewer` window on their computer only when they ask to
+  see the screen ("turn it on with the screen", "show me"); close it when they ask.
 - First run: if `status` says not_set_up, call `setup` and tell the user a PSN sign-in window opened on
   their screen; they sign in there and type the PIN shown on the PS5.
 """
@@ -212,6 +214,13 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         user. Any later tool call reconnects (takes a few seconds)."""
         stopped = await daemon.shutdown()
         return "disconnected from the PS5" if stopped else "was not connected"
+
+    @tool
+    async def viewer(show: bool) -> str:
+        """Open (show=true) or close a window on the user's computer with the live PS5 picture, for the
+        user to watch. Closed by default: open it only when the user asks to see the screen."""
+        opened = await daemon.viewer(show)
+        return "picture window is open on the user's computer" if opened else "picture window is closed"
 
     @tool
     async def wake() -> str:

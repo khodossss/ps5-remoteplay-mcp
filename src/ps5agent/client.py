@@ -124,6 +124,9 @@ class DaemonClient:
         data = await self._call("POST", "/input", json={"op": op, **body})
         return Snapshot.from_json(data["snapshot"]) if "snapshot" in data else None
 
+    async def viewer(self, show: bool) -> bool:
+        return (await self._call("POST", "/viewer", json={"show": show}))["viewer"]
+
     async def wake(self) -> None:
         await self._call("POST", "/wake")
 
