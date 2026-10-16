@@ -55,11 +55,13 @@ UntilChange = Annotated[
     Field(description="With snapshot_after_ms: return as soon as the screen changes (that is the max wait)."),
 ]
 
-# Hints for the client on when to ask the user (graph `ps5-agent-bridge`, node #32). The console is a
-# closed world on the LAN; only setup reaches PSN. Any input may confirm a dialog, so it is destructive.
+# Hints for the client on when to ask the user (graph `ps5-agent-bridge`, node #32). Gamepad input may
+# confirm any dialog, including PS Store and PSN messages, so it is destructive and open world.
 READS = ToolAnnotations(read_only_hint=True, open_world_hint=False)
-INPUT = ToolAnnotations(destructive_hint=True, idempotent_hint=False, open_world_hint=False)
+INPUT = ToolAnnotations(destructive_hint=True, idempotent_hint=False, open_world_hint=True)
 SAFE_CHANGE = ToolAnnotations(destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+# Rest mode ends a running game; disconnect also cuts a human playing through a computer gamepad.
+STOPS_PLAY = ToolAnnotations(destructive_hint=True, idempotent_hint=True, open_world_hint=False)
 
 
 def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
@@ -218,7 +220,7 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         await daemon.input("release_all")
         return "all input released"
 
-    @tool(SAFE_CHANGE)
+    @tool(STOPS_PLAY)
     async def disconnect() -> str:
         """End the Remote Play session and stop the background daemon, handing the console back to the
         user. Any later tool call reconnects (takes a few seconds)."""
@@ -238,7 +240,7 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         await daemon.wake()
         return "console is awake; the session reconnects within a few seconds - check `status`"
 
-    @tool(ToolAnnotations(destructive_hint=True, idempotent_hint=True, open_world_hint=False))
+    @tool(STOPS_PLAY)
     async def standby(confirm: Literal["yes"]) -> str:
         """Put the console into rest mode. Only when the user asked for it; pass confirm="yes"."""
         await daemon.standby()
