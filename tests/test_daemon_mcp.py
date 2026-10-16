@@ -129,8 +129,23 @@ async def test_mcp_lists_all_tools(cfg, daemon):
 
 
 async def _test_mcp_lists_all_tools(mcp_client):
-    tools = {t.name for t in (await mcp_client.list_tools()).tools}
-    assert tools == TOOLS
+    tools = {t.name: t.annotations for t in (await mcp_client.list_tools()).tools}
+    assert set(tools) == TOOLS
+    read = (True, None, None, False)
+    hints = {
+        n: (a.read_only_hint, a.destructive_hint, a.idempotent_hint, a.open_world_hint)
+        for n, a in tools.items()
+    }
+    # (read_only, destructive, idempotent, open_world); None is the spec default, so it is spelled out.
+    assert hints == {
+        "status": read,
+        "wait_ready": read,
+        "snapshot": read,
+        **dict.fromkeys(["press", "hold", "stick", "trigger", "sequence"], (None, True, False, True)),
+        **dict.fromkeys(["release_all", "viewer", "wake"], (None, False, True, False)),
+        **dict.fromkeys(["disconnect", "standby"], (None, True, True, False)),
+        "setup": (None, False, False, True),
+    }
 
 
 async def test_mcp_every_tool(cfg, daemon, fake):
