@@ -129,8 +129,14 @@ async def test_mcp_lists_all_tools(cfg, daemon):
 
 
 async def _test_mcp_lists_all_tools(mcp_client):
-    tools = {t.name for t in (await mcp_client.list_tools()).tools}
-    assert tools == TOOLS
+    tools = {t.name: t.annotations for t in (await mcp_client.list_tools()).tools}
+    assert set(tools) == TOOLS
+    reads = {n for n, a in tools.items() if a.read_only_hint}
+    assert reads == {"status", "wait_ready", "snapshot"}
+    destructive = {n for n, a in tools.items() if not a.read_only_hint and a.destructive_hint}
+    assert destructive == {"press", "hold", "stick", "trigger", "sequence", "standby"}
+    assert {n for n, a in tools.items() if a.open_world_hint} == {"setup"}
+    assert all(a.idempotent_hint is not None for n, a in tools.items() if n not in reads)
 
 
 async def test_mcp_every_tool(cfg, daemon, fake):

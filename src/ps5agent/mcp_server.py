@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from . import console
@@ -54,22 +55,31 @@ UntilChange = Annotated[
     Field(description="With snapshot_after_ms: return as soon as the screen changes (that is the max wait)."),
 ]
 
+# Hints for the client on when to ask the user (graph `ps5-agent-bridge`, node #32). The console is a
+# closed world on the LAN; only setup reaches PSN. Any input may confirm a dialog, so it is destructive.
+READS = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+INPUT = ToolAnnotations(destructive_hint=True, idempotent_hint=False, open_world_hint=False)
+SAFE_CHANGE = ToolAnnotations(destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+
 
 def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
     daemon = client or DaemonClient(cfg)
     mcp = MCPServer("ps5", instructions=INSTRUCTIONS, log_level="WARNING")
 
-    def tool(fn):
+    def tool(annotations: ToolAnnotations):
         """Register a tool; daemon refusals reach the model as readable errors, not masked ones."""
 
-        @functools.wraps(fn)
-        async def wrapper(*args, **kwargs):
-            try:
-                return await fn(*args, **kwargs)
-            except (DaemonError, ConsoleError) as err:
-                raise ToolError(str(err)) from err
+        def register(fn):
+            @functools.wraps(fn)
+            async def wrapper(*args, **kwargs):
+                try:
+                    return await fn(*args, **kwargs)
+                except (DaemonError, ConsoleError) as err:
+                    raise ToolError(str(err)) from err
 
-        return mcp.tool(structured_output=False)(wrapper)
+            return mcp.tool(structured_output=False, annotations=annotations)(wrapper)
+
+        return register
 
     def show(snap: Snapshot, note: str = "") -> list:
         return [Image(data=snap.jpeg, format="jpeg"), (note + "\n" if note else "") + snap.describe()]
@@ -82,21 +92,21 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         )
         return show(snap, note) if snap else note
 
-    @tool
+    @tool(READS)
     async def status() -> str:
         """Console and session state. daemon: up | stalled (session open, no new frames) | reconnecting |
         standby | unreachable | not_set_up; plus fps, age of the latest frame, firmware."""
         s = await daemon.status()
         return "\n".join(f"{k}: {v}" for k, v in s.items())
 
-    @tool
+    @tool(READS)
     async def wait_ready(timeout_s: Annotated[int, Field(ge=1, le=60)] = 30) -> str:
         """Wait until the video stream is live (after a reconnect or a stall), up to timeout_s."""
         s = await daemon.wait_ready(timeout_s)
         head = "stream is live" if s.pop("ready") else f"stream still not live after {timeout_s} s"
         return head + "\n" + "\n".join(f"{k}: {v}" for k, v in s.items())
 
-    @tool
+    @tool(READS)
     async def snapshot(
         max_width: Annotated[int, Field(ge=160, le=1920)] = 1024,
         quality: Annotated[int, Field(ge=10, le=95)] = 80,
@@ -104,7 +114,7 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         """Current PS5 screen as a JPEG. Do this before acting."""
         return show(await daemon.snapshot(max_width, quality))
 
-    @tool
+    @tool(INPUT)
     async def press(
         button: Button,
         duration_ms: Annotated[
@@ -124,7 +134,7 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
             duration_ms=duration_ms,
         )
 
-    @tool
+    @tool(INPUT)
     async def hold(
         button: Button,
         duration_ms: Ms,
@@ -141,7 +151,7 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
             duration_ms=duration_ms,
         )
 
-    @tool
+    @tool(INPUT)
     async def stick(
         side: Side,
         x: Annotated[float, Field(ge=-1, le=1, description="-1 left .. 1 right")],
@@ -162,7 +172,7 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
             duration_ms=duration_ms,
         )
 
-    @tool
+    @tool(INPUT)
     async def trigger(
         side: Side,
         value: Annotated[float, Field(ge=0, le=1, description="0 released .. 1 fully pressed")],
@@ -181,7 +191,7 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
             duration_ms=duration_ms,
         )
 
-    @tool
+    @tool(INPUT)
     async def sequence(
         steps: Annotated[
             list[dict],
@@ -202,39 +212,39 @@ def build_server(cfg: Config, client: DaemonClient | None = None) -> MCPServer:
         """Run several inputs in one call (e.g. navigate a menu), optionally returning the screen after."""
         return await send("sequence", snapshot_after_ms, until_change, f"ran {len(steps)} steps", steps=steps)
 
-    @tool
+    @tool(SAFE_CHANGE)
     async def release_all() -> str:
         """Release every button, center both sticks, release triggers."""
         await daemon.input("release_all")
         return "all input released"
 
-    @tool
+    @tool(SAFE_CHANGE)
     async def disconnect() -> str:
         """End the Remote Play session and stop the background daemon, handing the console back to the
         user. Any later tool call reconnects (takes a few seconds)."""
         stopped = await daemon.shutdown()
         return "disconnected from the PS5" if stopped else "was not connected"
 
-    @tool
+    @tool(SAFE_CHANGE)
     async def viewer(show: bool) -> str:
         """Open (show=true) or close a window on the user's computer with the live PS5 picture, for the
         user to watch. Closed by default: open it only when the user asks to see the screen."""
         opened = await daemon.viewer(show)
         return "picture window is open on the user's computer" if opened else "picture window is closed"
 
-    @tool
+    @tool(SAFE_CHANGE)
     async def wake() -> str:
         """Wake the console from rest mode (takes up to a minute), then the session reconnects."""
         await daemon.wake()
         return "console is awake; the session reconnects within a few seconds - check `status`"
 
-    @tool
+    @tool(ToolAnnotations(destructive_hint=True, idempotent_hint=True, open_world_hint=False))
     async def standby(confirm: Literal["yes"]) -> str:
         """Put the console into rest mode. Only when the user asked for it; pass confirm="yes"."""
         await daemon.standby()
         return "console is going to rest mode"
 
-    @tool
+    @tool(ToolAnnotations(destructive_hint=False, idempotent_hint=False, open_world_hint=True))
     async def setup(
         redirect_url: Annotated[
             str | None,
