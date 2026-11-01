@@ -10,8 +10,8 @@ import time
 import pytest
 from PIL import Image
 
-from ps5agent.client import DaemonClient
-from ps5agent.config import from_env
+from ps5_remoteplay_mcp.client import DaemonClient
+from ps5_remoteplay_mcp.config import from_env
 
 from .conftest import free_port
 
@@ -26,7 +26,7 @@ def hw_daemon():
     port = free_port()
     env = {**os.environ, "PS5_DAEMON_ADDR": f"127.0.0.1:{port}"}
     proc = subprocess.Popen(
-        [sys.executable, "-m", "ps5agent", "daemon"],
+        [sys.executable, "-m", "ps5_remoteplay_mcp", "daemon"],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

@@ -382,7 +382,7 @@ class RPStream:
             encrypted_key = b""
             ecdh_pub_key = None
             ecdh_sig = None
-            client_version = 9  # ps5agent: was 7, rejected by PS5
+            client_version = 9  # ps5-remoteplay-mcp: was 7, rejected by PS5
 
         data = ProtoHandler.big_payload(
             client_version=client_version,

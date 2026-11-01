@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from ps5agent import fec, frames
+from ps5_remoteplay_mcp import fec, frames
 
 
 @pytest.mark.parametrize("k,m", [(6, 1), (10, 3), (40, 8), (1, 1)])

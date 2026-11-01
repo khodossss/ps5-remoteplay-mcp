@@ -11,7 +11,7 @@ from .backend.base import ConsoleError
 from .config import Config
 
 REDIRECT_PREFIX = "https://remoteplay.dl.playstation.net/remoteplay/redirect"
-_VENDOR_LOGGER = "ps5agent.vendor.pyremoteplay"
+_VENDOR_LOGGER = "ps5_remoteplay_mcp.vendor.pyremoteplay"
 
 
 def prepare(cfg: Config) -> None:

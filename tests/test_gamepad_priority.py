@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from ps5agent.backend import Button, ConsoleError, Side
-from ps5agent.engine import InputAbortedError, InputEngine, Step
+from ps5_remoteplay_mcp.backend import Button, ConsoleError, Side
+from ps5_remoteplay_mcp.engine import InputAbortedError, InputEngine, Step
 
 
 async def test_preempt_drops_running_and_queued_sequences(fake):

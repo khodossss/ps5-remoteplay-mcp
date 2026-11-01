@@ -3,9 +3,9 @@ import time
 
 import pytest
 
-from ps5agent.backend import Button, Side
-from ps5agent.backend.fake import FakeBackend
-from ps5agent.engine import InputEngine, Step
+from ps5_remoteplay_mcp.backend import Button, Side
+from ps5_remoteplay_mcp.backend.fake import FakeBackend
+from ps5_remoteplay_mcp.engine import InputEngine, Step
 
 
 @pytest.fixture

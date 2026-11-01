@@ -6,10 +6,23 @@ import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-CONFIG_DIR = Path(os.environ.get("PS5_CONFIG_DIR", Path.home() / ".config" / "ps5-agent"))
+CONFIG_BASE = Path.home() / ".config"
 BACKENDS = ("pyremoteplay", "fake")
 RESOLUTIONS = ("360p", "540p", "720p", "1080p")
 QUALITIES = ("default", "very_low", "low", "medium", "high", "very_high")
+
+
+def default_config_dir(base: Path | None = None) -> Path:
+    """`~/.config/ps5-remoteplay-mcp`. A folder left under the old name `ps5-agent` is moved there, so an
+    existing console link survives the rename."""
+    base = base or CONFIG_BASE
+    new, old = base / "ps5-remoteplay-mcp", base / "ps5-agent"
+    if old.is_dir() and not new.exists():
+        try:
+            old.rename(new)
+        except OSError:  # a daemon of the old version still holds its log open: move on a later start
+            return old
+    return new
 
 
 @dataclass(frozen=True)
@@ -26,7 +39,7 @@ class Config:
     idle_exit_s: int = 600  # daemon exits (session closes) after this long without calls; 0 = never
     viewer: bool = False  # the daemon opens a window showing the console picture to the human
     fake_frames: str | None = None
-    config_dir: Path = field(default=CONFIG_DIR)
+    config_dir: Path = field(default_factory=default_config_dir)
 
     @property
     def daemon_url(self) -> str:
@@ -74,5 +87,5 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         idle_exit_s=int(env.get("PS5_IDLE_EXIT_S", "600")),
         viewer=env.get("PS5_VIEWER", "").lower() in ("1", "true", "yes", "on"),
         fake_frames=env.get("PS5_FAKE_FRAMES") or None,
-        config_dir=Path(env.get("PS5_CONFIG_DIR", CONFIG_DIR)),
+        config_dir=Path(env["PS5_CONFIG_DIR"]) if env.get("PS5_CONFIG_DIR") else default_config_dir(),
     )

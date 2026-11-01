@@ -16,6 +16,6 @@ Only the protocol modules are included (no GUI, gamepad or CLI). Changes made fo
   `send_data`, `_send_data_ack`, `send_feedback` and `send_congestion` (they advance cipher and TSN
   state), `Protocol.sendto` and `Protocol.close`; a closed transport is skipped. Cross-thread sends
   killed the stream on Windows.
-- `av.py`: forward error correction uses `ps5agent.fec` (pure numpy) instead of the `pyjerasure`
+- `av.py`: forward error correction uses `ps5_remoteplay_mcp.fec` (pure numpy) instead of the `pyjerasure`
   C extension.
 - `device.py`: removed the PlayStation Store cover-art lookup (dropped the `pyps4-2ndscreen` dependency).

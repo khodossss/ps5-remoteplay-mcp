@@ -8,12 +8,12 @@ import pytest
 from mcp import Client
 from mcp.types import TextContent
 
-from ps5agent.client import DaemonClient, DaemonError
-from ps5agent.config import from_env
-from ps5agent.daemon import Daemon, exit_when_idle
-from ps5agent.engine import InputAbortedError, InputEngine, Step
-from ps5agent.mcp_server import build_server
-from ps5agent.vendor.pyremoteplay.stream import RPStream
+from ps5_remoteplay_mcp.client import DaemonClient, DaemonError
+from ps5_remoteplay_mcp.config import from_env
+from ps5_remoteplay_mcp.daemon import Daemon, exit_when_idle
+from ps5_remoteplay_mcp.engine import InputAbortedError, InputEngine, Step
+from ps5_remoteplay_mcp.mcp_server import build_server
+from ps5_remoteplay_mcp.vendor.pyremoteplay.stream import RPStream
 
 from .conftest import free_port
 from .conftest import wait_until as _until

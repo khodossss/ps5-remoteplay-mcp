@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 from aiohttp import web
 
-from ps5agent.backend.fake import FakeBackend
-from ps5agent.config import Config
-from ps5agent.daemon import Daemon, build_app, make_runner
+from ps5_remoteplay_mcp.backend.fake import FakeBackend
+from ps5_remoteplay_mcp.config import Config
+from ps5_remoteplay_mcp.daemon import Daemon, build_app, make_runner
 
 
 def free_port() -> int:

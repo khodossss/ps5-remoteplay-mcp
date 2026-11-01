@@ -10,9 +10,9 @@ from mcp import Client
 from mcp.types import ImageContent, TextContent
 from PIL import Image
 
-from ps5agent.backend import ConsoleState
-from ps5agent.client import DaemonClient, DaemonError
-from ps5agent.mcp_server import build_server
+from ps5_remoteplay_mcp.backend import ConsoleState
+from ps5_remoteplay_mcp.client import DaemonClient, DaemonError
+from ps5_remoteplay_mcp.mcp_server import build_server
 
 
 @pytest.fixture
@@ -207,7 +207,7 @@ async def _test_mcp_standby_requires_confirm(mcp_client, fake):
 
 async def test_input_waits_for_session_while_connecting(cfg, fake):
     """First call right after autostart must wait for the session instead of failing."""
-    from ps5agent.daemon import Daemon
+    from ps5_remoteplay_mcp.daemon import Daemon
 
     d = Daemon(cfg, fake)
     d.state = "connecting"

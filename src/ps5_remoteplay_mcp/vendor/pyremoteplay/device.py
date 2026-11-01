@@ -206,7 +206,7 @@ class RPDevice:
         self._status = data
         if old_status != data:
             _LOGGER.debug("Status: %s", self.status)
-            self._media_info = None  # ps5agent: PS Store lookup removed
+            self._media_info = None  # ps5-remoteplay-mcp: PS Store lookup removed
             self._image = None
             if self.callback:
                 # Call immediately since we don't have to get media.
