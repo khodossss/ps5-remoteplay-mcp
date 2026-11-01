@@ -129,7 +129,7 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 | Link to the console (sign-in window + PIN) | `uv run ps5rp setup` (`--no-gui` for terminal) |
 | MCP server (agents launch it; no args = MCP, args = CLI) | `uv run ps5-remoteplay-mcp` |
 | Build / try as users get it | `uv build` → `uvx --isolated --from dist/<wheel> ps5-remoteplay-mcp --help` |
-| Publish (owner only, needs a PyPI token) | `uv publish` |
+| Release to PyPI (after merge, gate green on `main`) | `uv version --bump minor` (or `patch`) → commit, push `main` → `git tag vX.Y.Z` + `git push origin vX.Y.Z`; `.github/workflows/publish.yml` builds and publishes (PyPI trusted publisher, no token). A version is published once — never reuse it |
 | Format | `uv run ruff format src tests tools/gate.py` |
 
 ## Project structure
@@ -175,7 +175,7 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 - **Merge without a PR — always** (owner's standing instruction): when the owner says to ship, merge the branch into `main` locally (`git merge --no-ff`) and push `main`; do not open a PR. The cold stage review and the post-merge graph steps still apply.
 - **No AI attribution**: no `Co-Authored-By` trailers for Claude or other agents in commits, no "Generated with" lines in PR bodies — the repository lists the owner as its only contributor (owner's decision).
 - **Forge**: GitHub, `khodossss/ps5-remoteplay-mcp` (public); CLI `gh` — observe with `gh pr list`, `gh pr checks <n>`.
-- **Local gate — one call**: `uv run python tools/gate.py`; call it by name, never assemble the steps by hand. No CI yet.
+- **Local gate — one call**: `uv run python tools/gate.py`; call it by name, never assemble the steps by hand. CI has only the publish-on-tag workflow, so the gate runs locally before every tag.
 - **Definition of done**: not yet agreed.
 - **Never** `--no-verify`, `--force`, `--no-gpg-sign`, `git reset --hard` without an explicit instruction from the user.
 

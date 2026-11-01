@@ -12,8 +12,17 @@ A long-lived **daemon** owns the single Remote Play session. The thin **MCP serv
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/) and a PS5 on the same network as your computer (Ethernet or Wi-Fi).
+You need a PS5 on the same network as your computer (Ethernet or Wi-Fi) and [uv](https://docs.astral.sh/uv/).
 Tested on Windows 11; macOS and Linux are expected to work but untested.
+
+**0. Install uv** (once; skip if `uv --version` works), then open a new terminal:
+
+```
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 **1. On the PS5:** Settings → System → Remote Play → **Enable Remote Play**.
 
@@ -22,6 +31,9 @@ Tested on Windows 11; macOS and Linux are expected to work but untested.
 ```
 claude mcp add --transport stdio --scope user ps5 -- uvx ps5-remoteplay-mcp
 ```
+
+No `claude` command in your terminal (you use Claude Code only inside VS Code)? Ask Claude instead:
+*"Add a user-scope MCP server named ps5 that runs `uvx ps5-remoteplay-mcp`."* Then restart Claude Code.
 
 **3. Ask the agent:** *"Connect to my PS5."* It finds the console on your network and opens a sign-in window:
 
@@ -34,7 +46,7 @@ Done. From now on just ask: *"What's on the PS5 screen?"*
 
 ### Other ways to connect
 
-**Other MCP clients** (standard `mcpServers` JSON):
+**Other MCP clients** — Claude Desktop (`claude_desktop_config.json`), Cursor and others (standard `mcpServers` JSON):
 
 ```json
 {
@@ -56,6 +68,16 @@ args = ["ps5-remoteplay-mcp"]
 `uvx --from git+https://github.com/khodossss/ps5-remoteplay-mcp ps5-remoteplay-mcp`.
 
 **Set up from a terminal** instead of through the agent: `uvx ps5-remoteplay-mcp setup`.
+
+### Updating
+
+`uvx` keeps using the version it downloaded first. To move to the newest release, run once and restart your agent:
+
+```
+uvx ps5-remoteplay-mcp@latest stop
+```
+
+This fetches the latest version and stops the running daemon, so the next tool call starts the new one.
 
 ### Optional
 
