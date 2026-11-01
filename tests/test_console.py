@@ -108,3 +108,21 @@ def test_config_folder_kept_when_it_cannot_be_moved(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Path, "rename", busy)
     assert default_config_dir(tmp_path) == tmp_path / "ps5-agent"
+
+
+def test_config_folder_moved_by_another_process(tmp_path, monkeypatch):
+    (tmp_path / "ps5-agent").mkdir()
+
+    def lost_race(self, target):
+        (tmp_path / "ps5-remoteplay-mcp").mkdir()
+        raise FileNotFoundError("already moved")
+
+    monkeypatch.setattr(Path, "rename", lost_race)
+    assert default_config_dir(tmp_path) == tmp_path / "ps5-remoteplay-mcp"
+
+
+def test_new_config_folder_wins_over_a_leftover_old_one(tmp_path):
+    (tmp_path / "ps5-agent").mkdir()
+    (tmp_path / "ps5-remoteplay-mcp").mkdir()
+    assert default_config_dir(tmp_path) == tmp_path / "ps5-remoteplay-mcp"
+    assert (tmp_path / "ps5-agent").exists()  # left alone

@@ -77,7 +77,7 @@ The agent looks at a screenshot, presses buttons and looks again. It typically p
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `setup` | — | First run: find the PS5 and link this computer (sign-in window + PIN) |
+| `setup` | `redirect_url?`, `pin?` (chat fallback only) | First run: find the PS5 and link this computer (sign-in window + PIN) |
 | `status` | — | Console state (awake/standby), session, fps, age of the latest frame, firmware |
 | `wait_ready` | `timeout_s=30` | Wait until the video stream is live again after a reconnect or stall |
 | `snapshot` | `max_width=1024`, `quality=80` | Current screen as a JPEG |

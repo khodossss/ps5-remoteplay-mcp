@@ -20,8 +20,8 @@ def default_config_dir(base: Path | None = None) -> Path:
     if old.is_dir() and not new.exists():
         try:
             old.rename(new)
-        except OSError:  # a daemon of the old version still holds its log open: move on a later start
-            return old
+        except OSError:  # an old daemon holds its log open (move on a later start), or another process won
+            return new if new.exists() else old
     return new
 
 
