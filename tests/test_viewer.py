@@ -6,7 +6,7 @@ import io
 import httpx
 from PIL import Image
 
-from ps5agent.config import from_env
+from ps5_remoteplay_mcp.config import from_env
 
 
 async def test_frame_serves_new_frames_only(cfg, daemon, fake):
@@ -57,8 +57,8 @@ class FakeWindow:
 async def test_viewer_tool_opens_and_closes_the_window(cfg, daemon):
     from mcp import Client
 
-    from ps5agent.client import DaemonClient
-    from ps5agent.mcp_server import build_server
+    from ps5_remoteplay_mcp.client import DaemonClient
+    from ps5_remoteplay_mcp.mcp_server import build_server
 
     windows: list[FakeWindow] = []
     daemon.spawn_viewer = lambda: windows.append(FakeWindow()) or windows[-1]

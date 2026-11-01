@@ -31,7 +31,7 @@ STATUS_OK = 200
 STATUS_STANDBY = 620
 
 def _ipv4_interfaces() -> list[tuple[str, str]]:
-    """Return (address, broadcast) for every IPv4 interface address (ps5agent: psutil, no C build)."""
+    """Return (address, broadcast) for every IPv4 interface address (ps5-remoteplay-mcp: psutil, no C build)."""
     result = []
     for addresses in psutil.net_if_addrs().values():
         for address in addresses:

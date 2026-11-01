@@ -12,7 +12,17 @@ A long-lived **daemon** owns the single Remote Play session. The thin **MCP serv
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/) and a PS5 on the same network as your computer (Ethernet or Wi-Fi).
+You need a PS5 on the same network as your computer (Ethernet or Wi-Fi) and [uv](https://docs.astral.sh/uv/).
+Tested on Windows 11; macOS and Linux are expected to work but untested.
+
+**0. Install uv** (once; skip if `uv --version` works), then open a new terminal:
+
+```
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 **1. On the PS5:** Settings → System → Remote Play → **Enable Remote Play**.
 
@@ -21,6 +31,9 @@ You need [uv](https://docs.astral.sh/uv/) and a PS5 on the same network as your 
 ```
 claude mcp add --transport stdio --scope user ps5 -- uvx ps5-remoteplay-mcp
 ```
+
+No `claude` command in your terminal (you use Claude Code only inside VS Code)? Ask Claude instead:
+*"Add a user-scope MCP server named ps5 that runs `uvx ps5-remoteplay-mcp`."* Then restart Claude Code.
 
 **3. Ask the agent:** *"Connect to my PS5."* It finds the console on your network and opens a sign-in window:
 
@@ -33,7 +46,7 @@ Done. From now on just ask: *"What's on the PS5 screen?"*
 
 ### Other ways to connect
 
-**Other MCP clients** (standard `mcpServers` JSON):
+**Other MCP clients** — Claude Desktop (`claude_desktop_config.json`), Cursor and others (standard `mcpServers` JSON):
 
 ```json
 {
@@ -56,6 +69,16 @@ args = ["ps5-remoteplay-mcp"]
 
 **Set up from a terminal** instead of through the agent: `uvx ps5-remoteplay-mcp setup`.
 
+### Updating
+
+`uvx` keeps using the version it downloaded first. To move to the newest release, run once and restart your agent:
+
+```
+uvx ps5-remoteplay-mcp@latest stop
+```
+
+This fetches the latest version and stops the running daemon, so the next tool call starts the new one.
+
 ### Optional
 
 - To let the agent **wake the console from rest mode**: Settings → System → Power Saving → Features Available in Rest Mode → turn on **Stay Connected to the Internet** and **Enable Turning On PS5 from Network**.
@@ -70,24 +93,28 @@ Talk to your agent in plain language:
 - "Launch Astro Bot and describe its main menu."
 - "In the current menu, move down to *Display and Video* and open it."
 
-The agent looks at a screenshot, presses buttons and looks again. It typically passes `snapshot_after_ms` so a single tool call returns the screen after the input.
+The agent looks at a screenshot, presses buttons and looks again. It typically passes `snapshot_after_ms` so a single tool call returns the screen after the input, with `screen_changed` saying whether anything moved.
 
 ### Tools
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `setup` | — | First run: find the PS5 and link this computer (sign-in window + PIN) |
+| `setup` | `redirect_url?`, `pin?` (chat fallback only) | First run: find the PS5 and link this computer (sign-in window + PIN) |
 | `status` | — | Console state (awake/standby), session, fps, age of the latest frame, firmware |
+| `wait_ready` | `timeout_s=30` | Wait until the video stream is live again after a reconnect or stall |
 | `snapshot` | `max_width=1024`, `quality=80` | Current screen as a JPEG |
-| `press` | `button`, `duration_ms=80`, `snapshot_after_ms?` | Tap a button |
-| `hold` | `button`, `duration_ms` (≤ 10 000), `snapshot_after_ms?` | Hold a button, then release |
-| `stick` | `side`, `x`, `y` (-1..1; y=-1 is up), `duration_ms`, `snapshot_after_ms?` | Deflect a stick, then re-center |
-| `trigger` | `side`, `value` (0..1), `duration_ms`, `snapshot_after_ms?` | Analog L2/R2 |
-| `sequence` | `steps[]`, `snapshot_after_ms?` | Several inputs in one call (press / hold / stick / trigger / wait) |
+| `press` | `button`, `duration_ms=80` | Tap a button |
+| `hold` | `button`, `duration_ms` (≤ 10 000) | Hold a button, then release |
+| `stick` | `side`, `x`, `y` (-1..1; y=-1 is up), `duration_ms` | Deflect a stick, then re-center |
+| `trigger` | `side`, `value` (0..1), `duration_ms` | Analog L2/R2 |
+| `sequence` | `steps[]` | Several inputs in one call (press / hold / stick / trigger / wait) |
 | `release_all` | — | Release every button, center the sticks, release the triggers |
+| `disconnect` | — | End the Remote Play session and stop the daemon, handing the console back |
 | `wake` | — | Wake the console from rest mode |
 | `standby` | `confirm="yes"` | Put the console into rest mode |
 | `viewer` | `show` | Open or close a window with the live picture on the user's computer. Closed by default; the agent opens it when you ask to see the screen |
+
+Every input tool (`press` … `sequence`) also takes `snapshot_after_ms` (return the screen that long after the input) and `until_change` (return as soon as the screen changes, waiting at most `snapshot_after_ms`).
 
 Buttons: `cross circle square triangle up down left right l1 r1 l2 r2 l3 r3 options create touchpad ps`.
 
@@ -99,7 +126,8 @@ A `sequence` example:
 
 ### CLI
 
-The same package is a command-line tool (`uvx ps5-remoteplay-mcp <command>`):
+The same package is a command-line tool: `uvx ps5-remoteplay-mcp <command>`. Installed with
+`uv tool install ps5-remoteplay-mcp`, it is also on your PATH as `ps5-remoteplay-mcp` and the short `ps5rp`.
 
 ```
 setup                    # find the console and link this computer (window, or --no-gui for the terminal)
@@ -125,24 +153,20 @@ All optional. Environment variables; CLI flags of the same name override them.
 | `PS5_DAEMON_ADDR` | `127.0.0.1:9395` | Daemon API address (loopback only) |
 | `PS5_MAX_HOLD_MS` | `10000` | Upper bound for any hold |
 | `PS5_BACKEND` | `pyremoteplay` | `fake` runs without a console (for development) |
-| `PS5_VIEWER` | off | `1`: open the picture window whenever the daemon starts (otherwise the agent opens it on request, or run `ps5agent view`). Closing it does not stop the session |
+| `PS5_VIEWER` | off | `1`: open the picture window whenever the daemon starts (otherwise the agent opens it on request, or run `uvx ps5-remoteplay-mcp view`). Closing it does not stop the session |
+| `PS5_IDLE_EXIT_S` | `600` | The daemon closes the session after this long without calls or computer-gamepad activity; `0` = never |
+| `PS5_CONFIG_DIR` | `~/.config/ps5-remoteplay-mcp` | Where credentials, the saved console and the log live |
 
-Credentials live in `~/.config/ps5-agent/profiles.json` and never appear in logs or tool responses. The daemon log is `~/.config/ps5-agent/daemon.log`.
+Credentials live in `~/.config/ps5-remoteplay-mcp/profiles.json` and never appear in logs or tool responses. The daemon log is `~/.config/ps5-remoteplay-mcp/daemon.log`. A folder from an earlier version (`~/.config/ps5-agent`) is moved there automatically.
+
+## Playing alongside the agent
+
+- **Gamepad on the computer** (DualSense by USB or Bluetooth): it shares the daemon's session with the agent, and **you take priority**. Touching it interrupts the agent and drops its queued commands; the agent is refused until the gamepad has been neutral for two seconds. `status` reports `gamepad` and `human_input`.
+- Keep the daemon running while you play this way: `disconnect` would stop your input too. Unplugging the gamepad releases everything it held; after a session loss, let go of the gamepad before pressing again.
+- **Controller connected to the PS5 itself**: outside this arbitration. Ask the agent to disconnect (the `disconnect` tool) to hand the console back first.
+- Watch on the TV, or in a window on the computer: ask the agent to show the screen, or run `uvx ps5-remoteplay-mcp view`.
 
 ## Safety and reliability
-
-A DualSense connected to the computer by USB or Bluetooth can share the daemon's Remote Play
-session with the agent. The human takes priority: touching the gamepad interrupts the agent's input
-and drops its queued commands. Agent input is refused until the gamepad is neutral for two seconds.
-`status` reports `gamepad` and `human_input`. Watch the TV, or the computer window (`PS5_VIEWER=1` or
-`ps5agent view`).
-Leave the daemon running while playing with the computer gamepad; `disconnect` stops its input too.
-Unplugging the controller or losing its reader releases all input. After a session loss, release the
-gamepad before pressing again. USB and Bluetooth forwarding still require verification on a real
-DualSense and PS5.
-
-A controller connected directly to the PS5 is outside this arbitration. Call `disconnect` to close
-Remote Play and hand the console back before playing with that controller.
 
 - **No stuck input.** Everything is released on error, when the client disconnects, when the daemon stops, and when the session drops. A watchdog releases anything held past the cap. If the daemon is killed hard mid-hold, the console releases the input together with the session (verified on hardware).
 - **One input queue.** Two agents cannot press at the same time.
@@ -170,6 +194,7 @@ PS5 firmware 26.06-14.10.00.03, Ethernet; host Windows 11.
 - After the daemon is killed, the console keeps the old session for ~30–40 s; the daemon reconnects by itself afterwards.
 - The console sometimes ignores a press during a screen-transition animation. The agent sees that on the next screenshot and presses again.
 - Analog L2/R2 and sticks are implemented per the protocol but not yet verified inside a game.
+- Forwarding a computer gamepad is not yet verified with a real DualSense over USB and Bluetooth.
 - No audio.
 - The sign-in window needs a desktop session (Edge WebView2 on Windows, WebKit on macOS, GTK or Qt on Linux). Without one, the agent walks you through sign-in in the chat instead.
 - macOS is untested.
@@ -194,14 +219,16 @@ cd ps5-remoteplay-mcp
 uv sync
 uv run python tools/gate.py               # lint + format check + tests (one call)
 PS5_HOST=<ip> uv run pytest -m hardware   # round trip against a real console
-PS5_BACKEND=fake uv run ps5agent daemon   # run without a console
+PS5_BACKEND=fake uv run ps5rp daemon      # run without a console
 ```
 
 Tests run against a `FakeBackend`: frames come from a PNG folder or are synthetic, and `right`/`left` move focus. Hardware tests run only when `PS5_HOST` is set.
 
+This section is all a contributor needs. `AGENTS.md` describes the maintainer's own agent workflow and can be skipped.
+
 ## Credits
 
-- [pyremoteplay](https://github.com/ktnrg45/pyremoteplay) by ktnrg45 — the Remote Play protocol implementation. A modified copy is vendored in `src/ps5agent/vendor/pyremoteplay` (changes listed in its `NOTICE.md`).
+- [pyremoteplay](https://github.com/ktnrg45/pyremoteplay) by ktnrg45 — the Remote Play protocol implementation. A modified copy is vendored in `src/ps5_remoteplay_mcp/vendor/pyremoteplay` (changes listed in its `NOTICE.md`).
 - [chiaki-ng](https://github.com/streetpea/chiaki-ng) — reference for protocol details; its FEC test vectors were used to validate the FEC implementation.
 - [leolobato/ps5-mcp](https://github.com/leolobato/ps5-mcp) — inspiration for the tool set and the daemon + thin MCP architecture.
 

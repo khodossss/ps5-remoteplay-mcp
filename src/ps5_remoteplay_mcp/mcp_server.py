@@ -288,7 +288,7 @@ async def run_setup(cfg: Config, redirect_url: str | None = None, pin: str | Non
         return f"Already linked to the PS5 at {host}."
     # The window needs the main thread of its own process; stdin must not be the MCP stdio pipe.
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "ps5agent", "setup", "--gui-only",
+        sys.executable, "-m", "ps5_remoteplay_mcp", "setup", "--gui-only",
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )  # fmt: skip
     try:

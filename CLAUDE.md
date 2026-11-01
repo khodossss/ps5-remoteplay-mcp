@@ -95,11 +95,11 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 
 | Claim class | Canonical carrier | How to observe | Who can |
 |---|---|---|---|
-| Session / input / frames work | a live PS5 on the host's LAN, through the daemon | `PS5_HOST=<IP> uv run pytest -m hardware`; `uv run ps5agent snapshot` and look at the image | agent (console on the host LAN) |
+| Session / input / frames work | a live PS5 on the host's LAN, through the daemon | `PS5_HOST=<IP> uv run pytest -m hardware`; `uv run ps5rp snapshot` and look at the image | agent (console on the host LAN) |
 | An agent drives the console over MCP | the MCP server over stdio, launched as Claude Code launches it | stdio client `mcp.Client(StdioServerParameters(uv run ps5-remoteplay-mcp))` → `call_tool` | agent |
 | Users can install it | the built wheel in a clean `uvx --isolated` env (py3.12–3.14) | `uv build`; `uvx --isolated --python 3.13 --from dist/<wheel> ps5-remoteplay-mcp --help` | agent |
-| Sign-in window links a console | pywebview window + a real PSN account + PIN on the TV | `uv run ps5agent setup --force` | user (PSN password, TV) |
-| Latency | a live PS5 on the home screen | `uv run ps5agent latency` | agent |
+| Sign-in window links a console | pywebview window + a real PSN account + PIN on the TV | `uv run ps5rp setup --force` | user (PSN password, TV) |
+| Latency | a live PS5 on the home screen | `uv run ps5rp latency` | agent |
 
 **Ceiling**: behaviour inside a running game (analog L2/R2, sticks) needs a game running and the owner's go-ahead; Wi-Fi loss was verified only by artificial packet drops.
 
@@ -122,38 +122,38 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 |---|---|
 | Gate (ruff check + format --check + pytest) | `uv run python tools/gate.py` |
 | Hardware test (needs the console) | `PS5_HOST=<IP> uv run pytest -m hardware` |
-| Daemon in the foreground | `PS5_HOST=<IP> uv run ps5agent daemon` |
-| Status / snapshot / press / latency | `uv run ps5agent status \| snapshot -o f.jpg \| press cross \| latency` |
-| Picture window for the human (or `PS5_VIEWER=1` at daemon start) | `uv run ps5agent view` |
-| Stop the daemon | `uv run ps5agent stop` |
-| Link to the console (sign-in window + PIN) | `uv run ps5agent setup` (`--no-gui` for terminal) |
+| Daemon in the foreground | `PS5_HOST=<IP> uv run ps5rp daemon` |
+| Status / snapshot / press / latency | `uv run ps5rp status \| snapshot -o f.jpg \| press cross \| latency` |
+| Picture window for the human (or `PS5_VIEWER=1` at daemon start) | `uv run ps5rp view` |
+| Stop the daemon | `uv run ps5rp stop` |
+| Link to the console (sign-in window + PIN) | `uv run ps5rp setup` (`--no-gui` for terminal) |
 | MCP server (agents launch it; no args = MCP, args = CLI) | `uv run ps5-remoteplay-mcp` |
 | Build / try as users get it | `uv build` → `uvx --isolated --from dist/<wheel> ps5-remoteplay-mcp --help` |
-| Publish (owner only, needs a PyPI token) | `uv publish` |
+| Release to PyPI (after merge, gate green on `main`) | `uv version --bump minor` (or `patch`) → commit, push `main` → `git tag vX.Y.Z` + `git push origin vX.Y.Z`; `.github/workflows/publish.yml` builds and publishes (PyPI trusted publisher, no token). A version is published once — never reuse it |
 | Format | `uv run ruff format src tests tools/gate.py` |
 
 ## Project structure
-- `src/ps5agent/vendor/pyremoteplay/` — vendored protocol library, patched in place; every change listed in its `NOTICE.md`; excluded from ruff.
-- `src/ps5agent/backend/` — `ConsoleBackend` (base), `remoteplay.py` (session over the vendored library), `fake.py` (tests, `PS5_BACKEND=fake`).
-- `src/ps5agent/console.py` — discovery, saved console (`console.json`), linking (PSN redirect → user, PIN → registration).
-- `src/ps5agent/login_window.py` — pywebview window: Sony sign-in, catches the redirect, PIN form.
-- `src/ps5agent/engine.py` — input: serialization, watchdog, release guarantees.
-- `src/ps5agent/daemon.py` — session, reconnect, loopback HTTP API.
-- `src/ps5agent/viewer.py` — picture window for the human (separate process reading `/frame`).
-- `src/ps5agent/client.py` — daemon client + autostart; `mcp_server.py` — tools; `cli.py` — `ps5agent`.
-- `src/ps5agent/fec.py` — `pyjerasure` replacement (Cauchy Reed-Solomon, GF(2^8)).
+- `src/ps5_remoteplay_mcp/vendor/pyremoteplay/` — vendored protocol library, patched in place; every change listed in its `NOTICE.md`; excluded from ruff.
+- `src/ps5_remoteplay_mcp/backend/` — `ConsoleBackend` (base), `remoteplay.py` (session over the vendored library), `fake.py` (tests, `PS5_BACKEND=fake`).
+- `src/ps5_remoteplay_mcp/console.py` — discovery, saved console (`console.json`), linking (PSN redirect → user, PIN → registration).
+- `src/ps5_remoteplay_mcp/login_window.py` — pywebview window: Sony sign-in, catches the redirect, PIN form.
+- `src/ps5_remoteplay_mcp/engine.py` — input: serialization, watchdog, release guarantees.
+- `src/ps5_remoteplay_mcp/daemon.py` — session, reconnect, loopback HTTP API.
+- `src/ps5_remoteplay_mcp/viewer.py` — picture window for the human (separate process reading `/frame`).
+- `src/ps5_remoteplay_mcp/client.py` — daemon client + autostart; `mcp_server.py` — tools; `cli.py` — `ps5rp` (and `ps5-remoteplay-mcp`).
+- `src/ps5_remoteplay_mcp/fec.py` — `pyjerasure` replacement (Cauchy Reed-Solomon, GF(2^8)).
 - `tests/` — unit + MCP contract tests on fake; `test_hardware.py` — only with `PS5_HOST`.
-- `tools/gate.py` — the gate; `tools/spike.py` — one-off phase-0 spike (excluded from lint).
+- `tools/gate.py` — the gate.
 
 ## Code conventions
 - **Meaning lives in the graph, code references it.** A comment carrying the rationale of a decision, discarded alternatives or integration design is a graph node living away from home: move the meaning to the graph and leave a reference in code — "(graph `ps5-agent-bridge`, node #N)". Boundary: **the mechanics of a step — in words in the comment; meaning, rationale, integration — in the graph.** The reference works both ways: after referencing, check the node really says it. This repo is public: external contributors have no graph access, so a graph reference never replaces the one-line "why" a reader needs to change the code safely.
 - **External APIs (pyremoteplay, chiaki-ng, MCP SDK)**: class and method names come from the installed package and its source, never from memory.
 - **Test discipline**: unit tests on `FakeBackend`, an MCP contract test per tool, hardware tests `@pytest.mark.hardware` (only with `PS5_HOST`). Check the "nothing held" invariant (`FakeBackend.idle`) in every test of a new input path.
 - **Gotchas**:
-  - pyremoteplay is vendored, not a dependency: the PyPI release pulls `netifaces` (no Windows wheels — breaks `uvx`) and pins old `pyee`/`av`. Fix protocol bugs in `src/ps5agent/vendor/pyremoteplay` directly and add a line to its `NOTICE.md` (GPL requires marking changes). Run the hardware test after any change there.
-  - The vendored library's DEBUG logs print the handshake key and ECDH secret — `console.prepare` keeps logger `ps5agent.vendor.pyremoteplay` at INFO or above. Call `console.prepare(cfg)` before using the library (it also points profiles at `~/.config/ps5-agent/profiles.json`).
+  - pyremoteplay is vendored, not a dependency: the PyPI release pulls `netifaces` (no Windows wheels — breaks `uvx`) and pins old `pyee`/`av`. Fix protocol bugs in `src/ps5_remoteplay_mcp/vendor/pyremoteplay` directly and add a line to its `NOTICE.md` (GPL requires marking changes). Run the hardware test after any change there.
+  - The vendored library's DEBUG logs print the handshake key and ECDH secret — `console.prepare` keeps logger `ps5_remoteplay_mcp.vendor.pyremoteplay` at INFO or above. Call `console.prepare(cfg)` before using the library (it also points profiles at `~/.config/ps5-remoteplay-mcp/profiles.json`).
   - Audio is disabled in the receiver (decoder and resampler are skipped).
-  - Sony redirects only to `remoteplay.dl.playstation.net` after sign-in: a normal browser cannot hand the code back. The pywebview window catches it from its own navigation. pywebview needs the main thread of its own process: the MCP `setup` tool spawns `ps5agent setup --gui-only` with stdin=DEVNULL; exit code 3 = no GUI → the tool returns the chat fallback (link → `setup(redirect_url)` → `setup(pin)`).
+  - Sony redirects only to `remoteplay.dl.playstation.net` after sign-in: a normal browser cannot hand the code back. The pywebview window catches it from its own navigation. pywebview needs the main thread of its own process: the MCP `setup` tool spawns `ps5rp setup --gui-only` with stdin=DEVNULL; exit code 3 = no GUI → the tool returns the chat fallback (link → `setup(redirect_url)` → `setup(pin)`).
   - `[WinError 10048]` on DDP port 9303 in the log is harmless: two processes discovering at once; the library falls back to another port.
   - Windows: after a pyremoteplay session, closing the asyncio loop hangs on a UDP operation — processes holding a session exit via `os._exit` after cleanup (`daemon.run`).
   - The vendored library sends UDP from other threads (controller worker, AV executor); asyncio transports are loop-thread only, and a cross-thread send kills the stream on Windows (`Fatal write error on datagram transport`). `RPStream.Protocol.sendto` marshals to the loop — any new send path must go through it.
@@ -175,7 +175,7 @@ Not fully settled: run the interview (say iskronify). Seeded by use:
 - **Merge without a PR — always** (owner's standing instruction): when the owner says to ship, merge the branch into `main` locally (`git merge --no-ff`) and push `main`; do not open a PR. The cold stage review and the post-merge graph steps still apply.
 - **No AI attribution**: no `Co-Authored-By` trailers for Claude or other agents in commits, no "Generated with" lines in PR bodies — the repository lists the owner as its only contributor (owner's decision).
 - **Forge**: GitHub, `khodossss/ps5-remoteplay-mcp` (public); CLI `gh` — observe with `gh pr list`, `gh pr checks <n>`.
-- **Local gate — one call**: `uv run python tools/gate.py`; call it by name, never assemble the steps by hand. No CI yet.
+- **Local gate — one call**: `uv run python tools/gate.py`; call it by name, never assemble the steps by hand. CI has only the publish-on-tag workflow, so the gate runs locally before every tag.
 - **Definition of done**: not yet agreed.
 - **Never** `--no-verify`, `--force`, `--no-gpg-sign`, `git reset --hard` without an explicit instruction from the user.
 

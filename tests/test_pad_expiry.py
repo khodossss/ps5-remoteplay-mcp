@@ -1,8 +1,8 @@
 import asyncio
 import time
 
-from ps5agent.backend import Button
-from ps5agent.gamepad import PadState
+from ps5_remoteplay_mcp.backend import Button
+from ps5_remoteplay_mcp.gamepad import PadState
 
 from .conftest import wait_until as until
 

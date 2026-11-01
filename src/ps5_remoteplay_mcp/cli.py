@@ -1,4 +1,4 @@
-"""`ps5agent` CLI: setup | daemon | view | status | snapshot | press | latency | stop."""
+"""`ps5rp` CLI: setup | daemon | view | status | snapshot | press | latency | stop."""
 
 from __future__ import annotations
 
@@ -138,8 +138,8 @@ def cmd_setup(cfg: Config, args: argparse.Namespace) -> None:
     print(f"linked; credentials saved in {cfg.profile_path}")
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="ps5agent", description="Drive a PS5 over Remote Play.")
+def main(argv: list[str] | None = None, prog: str = "ps5rp") -> None:
+    parser = argparse.ArgumentParser(prog=prog, description="Drive a PS5 over Remote Play.")
     parser.add_argument("--host", help="console IP (PS5_HOST)")
     parser.add_argument("--user", help="registered PSN user (PS5_USER)")
     parser.add_argument("--backend", choices=["pyremoteplay", "fake"], help="PS5_BACKEND")
@@ -191,7 +191,7 @@ if __name__ == "__main__":
 def entry() -> None:
     """`ps5-remoteplay-mcp`: no arguments runs the MCP server (what agents launch); otherwise the CLI."""
     if len(sys.argv) > 1:
-        main()
+        main(prog="ps5-remoteplay-mcp")
     else:
         from .mcp_server import main as mcp_main
 

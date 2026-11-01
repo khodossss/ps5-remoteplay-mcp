@@ -55,7 +55,7 @@ def spawn_daemon(cfg: Config) -> subprocess.Popen:
     cfg.config_dir.mkdir(parents=True, exist_ok=True)
     log = open(cfg.log_path, "ab")
     kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": log, "stderr": log, "close_fds": True}
-    cmd = [sys.executable, "-m", "ps5agent", "daemon"]
+    cmd = [sys.executable, "-m", "ps5_remoteplay_mcp", "daemon"]
     if os.name != "nt":
         return subprocess.Popen(cmd, start_new_session=True, **kwargs)
     detached = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP

@@ -1,13 +1,14 @@
-"""Console discovery, host persistence and linking input checks (no network)."""
+"""Console discovery, host persistence, config folder and linking input checks (no network)."""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
-from ps5agent import console
-from ps5agent.backend import ConsoleError, ConsoleState
-from ps5agent.config import Config
-from ps5agent.daemon import Daemon
+from ps5_remoteplay_mcp import console
+from ps5_remoteplay_mcp.backend import ConsoleError, ConsoleState
+from ps5_remoteplay_mcp.config import Config, default_config_dir
+from ps5_remoteplay_mcp.daemon import Daemon
 
 
 @pytest.fixture
@@ -68,7 +69,7 @@ def test_fresh_install_is_not_set_up(cfg):
 
 
 def test_interfaces_without_netifaces():
-    from ps5agent.vendor.pyremoteplay import ddp
+    from ps5_remoteplay_mcp.vendor.pyremoteplay import ddp
 
     pairs = ddp._ipv4_interfaces()
     assert pairs and all(addr and broadcast for addr, broadcast in pairs)
@@ -76,7 +77,7 @@ def test_interfaces_without_netifaces():
 
 async def test_daemon_reports_not_set_up(cfg, fake):
     async def status():
-        from ps5agent.backend.base import Status
+        from ps5_remoteplay_mcp.backend.base import Status
 
         return Status(ConsoleState.NOT_SET_UP, False, detail="not set up yet: run the setup tool")
 
@@ -88,3 +89,40 @@ async def test_daemon_reports_not_set_up(cfg, fake):
     with pytest.raises(ConsoleError, match="setup"):
         await d.snapshot()
     await d.stop()
+
+
+def test_config_folder_under_the_old_name_is_moved(tmp_path):
+    (tmp_path / "ps5-agent").mkdir()
+    (tmp_path / "ps5-agent" / "profiles.json").write_text("{}")
+    new = default_config_dir(tmp_path)
+    assert new == tmp_path / "ps5-remoteplay-mcp"
+    assert (new / "profiles.json").read_text() == "{}" and not (tmp_path / "ps5-agent").exists()
+    assert default_config_dir(tmp_path) == new  # nothing left to move
+
+
+def test_config_folder_kept_when_it_cannot_be_moved(tmp_path, monkeypatch):
+    (tmp_path / "ps5-agent").mkdir()
+
+    def busy(self, target):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(Path, "rename", busy)
+    assert default_config_dir(tmp_path) == tmp_path / "ps5-agent"
+
+
+def test_config_folder_moved_by_another_process(tmp_path, monkeypatch):
+    (tmp_path / "ps5-agent").mkdir()
+
+    def lost_race(self, target):
+        (tmp_path / "ps5-remoteplay-mcp").mkdir()
+        raise FileNotFoundError("already moved")
+
+    monkeypatch.setattr(Path, "rename", lost_race)
+    assert default_config_dir(tmp_path) == tmp_path / "ps5-remoteplay-mcp"
+
+
+def test_new_config_folder_wins_over_a_leftover_old_one(tmp_path):
+    (tmp_path / "ps5-agent").mkdir()
+    (tmp_path / "ps5-remoteplay-mcp").mkdir()
+    assert default_config_dir(tmp_path) == tmp_path / "ps5-remoteplay-mcp"
+    assert (tmp_path / "ps5-agent").exists()  # left alone

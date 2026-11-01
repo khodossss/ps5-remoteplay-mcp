@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from ps5agent.backend import Button, ConsoleError, Side
-from ps5agent.backend.remoteplay import RemotePlayBackend
-from ps5agent.config import Config
+from ps5_remoteplay_mcp.backend import Button, ConsoleError, Side
+from ps5_remoteplay_mcp.backend.remoteplay import RemotePlayBackend
+from ps5_remoteplay_mcp.config import Config
 
 
 class StubController:

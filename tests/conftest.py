@@ -9,9 +9,10 @@ from pathlib import Path
 import pytest
 from aiohttp import web
 
-from ps5agent.backend.fake import FakeBackend
-from ps5agent.config import Config
-from ps5agent.daemon import Daemon, build_app, make_runner
+from ps5_remoteplay_mcp import config
+from ps5_remoteplay_mcp.backend.fake import FakeBackend
+from ps5_remoteplay_mcp.config import Config
+from ps5_remoteplay_mcp.daemon import Daemon, build_app, make_runner
 
 
 def free_port() -> int:
@@ -25,6 +26,13 @@ async def wait_until(predicate: Callable[[], bool], timeout_s: float = 3.0) -> N
     while not predicate():
         assert time.monotonic() < deadline, "condition not reached"
         await asyncio.sleep(0.005)
+
+
+@pytest.fixture(autouse=True)
+def _home_config(request, tmp_path_factory, monkeypatch):
+    """Keep the default config folder out of the real home; hardware tests need the real credentials."""
+    if request.node.get_closest_marker("hardware") is None:
+        monkeypatch.setattr(config, "CONFIG_BASE", tmp_path_factory.mktemp("home"))
 
 
 @pytest.fixture

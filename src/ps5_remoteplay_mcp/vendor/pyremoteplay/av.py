@@ -241,7 +241,7 @@ class AVStream:
 
     def _handle_fec_packet(self, packet: AVPacket):
         try:
-            from ... import fec as pyjerasure  # ps5agent: numpy FEC, no C extension
+            from ... import fec as pyjerasure  # ps5-remoteplay-mcp: numpy FEC, no C extension
         except ModuleNotFoundError:
             return
         if not self._frame_bad_order and not self._missing:

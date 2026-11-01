@@ -25,7 +25,7 @@ def spawn_viewer() -> subprocess.Popen:
     # the daemon has no console on Windows: without CREATE_NO_WINDOW the child would pop one up
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     return subprocess.Popen(
-        [sys.executable, "-m", "ps5agent", "view"], stdin=subprocess.DEVNULL, creationflags=flags
+        [sys.executable, "-m", "ps5_remoteplay_mcp", "view"], stdin=subprocess.DEVNULL, creationflags=flags
     )
 
 

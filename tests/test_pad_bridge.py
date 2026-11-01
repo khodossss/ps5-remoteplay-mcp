@@ -5,11 +5,11 @@ import pytest
 from mcp import Client
 from mcp.types import TextContent
 
-from ps5agent.backend import Button, Side
-from ps5agent.client import DaemonClient, DaemonError
-from ps5agent.daemon import exit_when_idle
-from ps5agent.gamepad import IDLE, PadState, state_from_sdl
-from ps5agent.mcp_server import build_server
+from ps5_remoteplay_mcp.backend import Button, Side
+from ps5_remoteplay_mcp.client import DaemonClient, DaemonError
+from ps5_remoteplay_mcp.daemon import exit_when_idle
+from ps5_remoteplay_mcp.gamepad import IDLE, PadState, state_from_sdl
+from ps5_remoteplay_mcp.mcp_server import build_server
 
 from .conftest import wait_until as until
 
