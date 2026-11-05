@@ -223,9 +223,6 @@ PS5_BACKEND=fake uv run ps5rp daemon      # run without a console
 ```
 
 Tests run against a `FakeBackend`: frames come from a PNG folder or are synthetic, and `right`/`left` move focus. Hardware tests run only when `PS5_HOST` is set.
-
-This section is all a contributor needs. `AGENTS.md` describes the maintainer's own agent workflow and can be skipped.
-
 ## Credits
 
 - [pyremoteplay](https://github.com/ktnrg45/pyremoteplay) by ktnrg45 — the Remote Play protocol implementation. A modified copy is vendored in `src/ps5_remoteplay_mcp/vendor/pyremoteplay` (changes listed in its `NOTICE.md`).

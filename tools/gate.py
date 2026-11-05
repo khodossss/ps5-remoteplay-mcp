@@ -5,8 +5,8 @@ import subprocess
 import sys
 
 STEPS = [
-    ["ruff", "check", "src", "tests", "tools/gate.py"],
-    ["ruff", "format", "--check", "src", "tests", "tools/gate.py"],
+    ["ruff", "check", "src", "tests", "tools"],
+    ["ruff", "format", "--check", "src", "tests", "tools"],
     ["pytest", "-q"],
 ]
 

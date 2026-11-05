@@ -43,7 +43,7 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "tools"]
 markers = ["hardware: needs a real PS5 (set PS5_HOST)"]
 
 [tool.ruff]
