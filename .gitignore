@@ -7,3 +7,4 @@ snapshot.jpg
 dist/
 .uv-cache/
 .test-run/
+.worktrees/

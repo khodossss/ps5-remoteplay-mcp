@@ -1,8 +1,39 @@
 # PS5 Remote Play MCP
 
-An MCP server that lets an LLM agent (Claude Code, Codex, any MCP client) **see the screen of a stock PlayStation 5 and drive it like a gamepad**. It uses Sony's official Remote Play protocol over your local network: no jailbreak and no capture card.
+**Hand your PS5 controller to an AI agent.** Claude Code, Codex or any MCP client sees the screen of a stock PlayStation 5 and presses its buttons, over Sony's official Remote Play on your home network. No jailbreak, no capture card, one command to add it to your agent.
 
-Good for menus, settings, launching games, turn-based and slow-paced games, and "what's on screen right now?". Not for real-time action: one *frame → model → button* round trip takes seconds.
+> "Find ferrari 296 monza setup, apply it for current setup and explain each change"
+>
+> "I'm struggling in the slow corners: the rear steps out on exit."
+
+![Claude Code sets up a Ferrari 296 GT3 for Monza in Assetto Corsa Competizione](docs/demo/acc-car-setup.gif)
+
+*Left: the chat with Claude Code. Right: the PS5 screen the agent is looking at, in Assetto Corsa Competizione. Recorded on a real PS5, sped up 10×.*
+
+The agent searches the web for a Monza setup. The site it picks is behind a bot check, so it says so and takes a reference setup from its knowledge file instead, naming that source. It enters the values in the game's setup menu (traction control, anti-roll bars, rear wing) and saves them as a new setup. Then it fixes the oversteer out of the chicanes: one more step of traction control, a softer rear anti-roll bar and a little more rear toe-in, each change with the rule behind it.
+
+Each step is the same loop: take a screenshot, decide, press buttons, take another screenshot to check what happened.
+
+## What else you can ask
+
+The same loop works wherever the game waits for you. Some ideas:
+
+- **Team and season management.** *"Run a fantasy draft in NBA 2K27 and build a defense-first team."* The agent would read player cards and explain each pick; trades, lineups and rotations are the same kind of menu work.
+- **Turn-based battles.** *"Win this fight in Vampire Crawlers and tell me your plan before each move."* Also card games like Balatro and turn-based RPGs: the agent reads enemies and cards and picks a move.
+- **Story choices.** *"Play Baldur's Gate 3 as a pacifist."* The agent reads the dialogue and picks the matching line.
+- **Builds and tuning.** Spend level-ups for a strength build in Elden Ring, compare two items in Diablo IV, tune a car in Gran Turismo 7.
+- **Photo mode.** *"Take a nice shot in Astro Bot: low angle, shallow focus."* Moving the camera needs the sticks, which are not yet verified inside a game.
+- **Apps.** *"Help me pick a movie on Netflix for tonight: something like Interstellar, under two hours."* Some video apps hide their picture from Remote Play; the agent then sees a black screen and says so.
+- **Console chores.** *"Is the download finished? How much space is left?"*, *"Which Astro Bot trophies are left?"*, *"Limit my kid's playtime to two hours a day."*
+- **Accessibility.** The agent describes what is on the screen and moves through menus on request, for players who cannot see the screen well.
+- **Testing for game developers.** *"Go through every settings screen and save a screenshot of each"*, or check a translation for cut-off text on a retail console.
+
+### Good at, not good at
+
+- **Good at:** menus and settings, launching games and apps, turn-based and slow-paced games, team and car management, and "what's on the screen right now?"
+- **Not good at:** real-time action. One *screenshot → model → button* round trip takes seconds, so shooting, driving a lap or dodging is out of reach.
+
+## How it works
 
 ```
 Claude Code ──stdio──▶ ps5-remoteplay-mcp ──HTTP (127.0.0.1)──▶ daemon ──Remote Play (LAN)──▶ PS5
@@ -229,7 +260,7 @@ Tests run against a `FakeBackend`: frames come from a PNG folder or are syntheti
 - [chiaki-ng](https://github.com/streetpea/chiaki-ng) — reference for protocol details; its FEC test vectors were used to validate the FEC implementation.
 - [leolobato/ps5-mcp](https://github.com/leolobato/ps5-mcp) — inspiration for the tool set and the daemon + thin MCP architecture.
 
-Not affiliated with Sony Interactive Entertainment. PlayStation and PS5 are trademarks of Sony Interactive Entertainment Inc.
+Not affiliated with Sony Interactive Entertainment. PlayStation and PS5 are trademarks of Sony Interactive Entertainment Inc. Games and apps named in this README belong to their owners; the project is not affiliated with them.
 
 ## License
 

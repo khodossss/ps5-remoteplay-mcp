@@ -1,8 +1,8 @@
 [project]
 name = "ps5-remoteplay-mcp"
-version = "0.2.1"
+version = "0.2.2"
 description = "MCP server that lets an LLM agent see and drive a stock PS5 over Remote Play"
-readme = "README.md"
+dynamic = ["readme"]
 license = "GPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
@@ -28,11 +28,29 @@ ps5-remoteplay-mcp = "ps5_remoteplay_mcp.cli:entry"
 ps5rp = "ps5_remoteplay_mcp.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-fancy-pypi-readme>=24"]
 build-backend = "hatchling.build"
+
+# README for PyPI: repo-relative image paths become absolute, PyPI cannot resolve relative ones.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\((docs/[^)]+)\)'
+replacement = '](https://raw.githubusercontent.com/khodossss/ps5-remoteplay-mcp/main/\1)'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\(LICENSE\)'
+replacement = '](https://github.com/khodossss/ps5-remoteplay-mcp/blob/main/LICENSE)'
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ps5_remoteplay_mcp"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["docs/demo"]  # the README GIFs are served from GitHub; they only bloat the source archive
 
 [dependency-groups]
 dev = [
